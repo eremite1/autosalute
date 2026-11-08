@@ -20,6 +20,7 @@ import it.eremite.autosalute.App
 import it.eremite.autosalute.Live
 import it.eremite.autosalute.Prefs
 import it.eremite.autosalute.R
+import it.eremite.autosalute.Updater
 import it.eremite.autosalute.data.Db
 import it.eremite.autosalute.data.Sample
 import it.eremite.autosalute.data.Trip
@@ -82,6 +83,12 @@ class ObdService : Service() {
             }
         }
         Live.status.value = "Non collegato"
+        try {
+            Updater.check(this, quiet = true, minGapMs = 12 * 3600_000L)?.let {
+                App.notify(this, App.CH_TRIP, 60, "Aggiornamento AutoSalute disponibile",
+                    "Versione 1.0.${it.code}. Apri l'app e premi \"Scarica e installa\".")
+            }
+        } catch (_: Exception) {}
         stopSelf()
     }
 

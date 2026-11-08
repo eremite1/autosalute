@@ -30,6 +30,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import it.eremite.autosalute.Live
 import it.eremite.autosalute.Prefs
+import it.eremite.autosalute.Updater
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import it.eremite.autosalute.service.ObdService
 import it.eremite.autosalute.service.Watch
 
@@ -49,6 +52,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refresh.intValue++
+        lifecycleScope.launch { Updater.check(this@MainActivity, quiet = true, minGapMs = 3 * 3600_000L) }
     }
 
     fun askPermissions() {

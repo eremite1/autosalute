@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import it.eremite.autosalute.Live
 import it.eremite.autosalute.Prefs
+import it.eremite.autosalute.Updater
 import it.eremite.autosalute.data.Db
 import it.eremite.autosalute.data.Sample
 import it.eremite.autosalute.data.Trip
@@ -29,6 +30,7 @@ import it.eremite.autosalute.health.Health
 import it.eremite.autosalute.obd.LABELS
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -87,6 +89,7 @@ fun HomeScreen(act: MainActivity, goSetup: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
         Header("La tua Sandero", last?.let { "Ultimo viaggio: " + dayFmt.format(Date(it.start)) })
         Spacer(Modifier.height(8.dp)); ConnChip()
+        UpdateBox(always = false)
         Box(Modifier.fillMaxWidth().padding(top = 12.dp), contentAlignment = Alignment.Center) { ScoreRing(score, label) }
 
         if (Prefs.mac(act) == null) {
@@ -371,6 +374,9 @@ fun SetupScreen(act: MainActivity) {
             TextButton(onClick = { act.askPermissions() }) { Text("Ricontrolla i permessi") }
         }
 
+        Section("Aggiornamenti")
+        UpdateBox(always = true)
+
         Section("Dati")
         Box2(Modifier.fillMaxWidth()) {
             Text("I viaggi restano solo sul tuo telefono.", color = C.dim, fontSize = 13.sp)
@@ -391,4 +397,53 @@ fun SetupScreen(act: MainActivity) {
         title = { Text("Cancellare tutto?") },
         text = { Text("Perderai lo storico e l'app dovrà reimparare i valori normali della tua auto.") }
     )
+}
+
+// ------------------------------------------------------------------ AGGIORNAMENTI
+@Composable
+fun UpdateBox(always: Boolean) {
+    val ctx = LocalContext.current
+    val st by Updater.state.collectAsState()
+    val scope = rememberCoroutineScope()
+    if (!always && st !is Updater.State.Available && st !is Updater.State.Downloading && st !is Updater.State.Ready) return
+    Box2(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+        when (val s = st) {
+            is Updater.State.Available -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Dot(C.info); Spacer(Modifier.width(8.dp))
+                    Text("Aggiornamento disponibile", color = C.text, fontWeight = FontWeight.Bold)
+                }
+                Text("Versione 1.0.${s.info.code} (hai la ${Updater.currentName(ctx)})", color = C.dim, fontSize = 13.sp)
+                if (s.info.notes.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(s.info.notes, color = C.text.copy(alpha = 0.85f), fontSize = 13.sp)
+                }
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = { scope.launch { Updater.download(ctx, s.info) } }) { Text("Scarica e installa") }
+            }
+            is Updater.State.Downloading -> {
+                Text("Scarico la versione 1.0.${s.info.code}… ${s.pct}%", color = C.text)
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(progress = { s.pct / 100f }, modifier = Modifier.fillMaxWidth())
+            }
+            is Updater.State.Ready -> {
+                Text("Pronto da installare", color = C.text, fontWeight = FontWeight.Bold)
+                if (!Updater.canInstall(ctx)) Text("Android chiederà di consentire l'installazione da AutoSalute: attiva l'interruttore, torna indietro e premi di nuovo Installa.", color = C.dim, fontSize = 13.sp)
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = { Updater.install(ctx) }) { Text("Installa") }
+            }
+            else -> {
+                Text("Versione installata: ${Updater.currentName(ctx)}", color = C.text)
+                val msg = when (s) {
+                    is Updater.State.Checking -> "Controllo in corso…"
+                    is Updater.State.UpToDate -> "Hai già l'ultima versione."
+                    is Updater.State.Error -> s.msg
+                    else -> "L'app controlla da sola ogni volta che la apri."
+                }
+                Text(msg, color = if (s is Updater.State.Error) C.warn else C.dim, fontSize = 13.sp)
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = { scope.launch { Updater.check(ctx) } }) { Text("Controlla aggiornamenti") }
+            }
+        }
+    }
 }
