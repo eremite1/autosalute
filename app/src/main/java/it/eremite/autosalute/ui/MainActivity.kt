@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.sp
 import it.eremite.autosalute.Live
 import it.eremite.autosalute.Prefs
 import it.eremite.autosalute.Updater
@@ -125,7 +126,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun Root(act: MainActivity) {
     var tab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Salute" to Icons.Filled.Favorite, "Live" to Icons.Filled.PlayArrow, "Viaggi" to Icons.AutoMirrored.Filled.List,
+    val tabs = listOf("Salute" to Icons.Filled.Favorite, "Live" to Icons.Filled.PlayArrow, "Eco" to Icons.Filled.Star, "Viaggi" to Icons.AutoMirrored.Filled.List,
         "Tendenze" to Icons.Filled.DateRange, "Imposta" to Icons.Filled.Settings)
     Scaffold(
         containerColor = C.bg,
@@ -134,7 +135,7 @@ fun Root(act: MainActivity) {
                 tabs.forEachIndexed { i, (label, icon) ->
                     NavigationBarItem(
                         selected = tab == i, onClick = { tab = i },
-                        icon = { Icon(icon, contentDescription = label) }, label = { Text(label) },
+                        icon = { Icon(icon, contentDescription = label) }, label = { Text(label, fontSize = 11.sp, maxLines = 1) },
                         colors = NavigationBarItemDefaults.colors(indicatorColor = C.card2, selectedIconColor = C.ok, selectedTextColor = C.ok,
                             unselectedIconColor = C.dim, unselectedTextColor = C.dim)
                     )
@@ -144,10 +145,11 @@ fun Root(act: MainActivity) {
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             when (tab) {
-                0 -> HomeScreen(act) { tab = 4 }
+                0 -> HomeScreen(act) { tab = 5 }
                 1 -> LiveScreen()
-                2 -> TripsScreen()
-                3 -> TrendsScreen()
+                2 -> EcoScreen()
+                3 -> TripsScreen()
+                4 -> TrendsScreen()
                 else -> SetupScreen(act)
             }
         }

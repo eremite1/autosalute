@@ -27,6 +27,8 @@ import it.eremite.autosalute.data.Trip
 import it.eremite.autosalute.health.Finding
 import it.eremite.autosalute.health.Health
 import it.eremite.autosalute.health.TripAcc
+import it.eremite.autosalute.health.Eco
+import it.eremite.autosalute.health.EcoAcc
 import it.eremite.autosalute.obd.*
 import kotlinx.coroutines.*
 import java.io.IOException
@@ -146,6 +148,7 @@ class ObdService : Service() {
 class Recorder(private val ctx: Context, private val elm: Elm) {
     private val db = Db.get(ctx)
     private val acc = TripAcc()
+    private val eco = EcoAcc()
     private val sent = HashSet<String>()
     private val liveFindings = ArrayList<Finding>()
     private var lowVoltSince = 0L
@@ -160,6 +163,9 @@ class Recorder(private val ctx: Context, private val elm: Elm) {
         if (acc.dtcs.isNotEmpty() || acc.mil) alarm("dtc", "Codici errore presenti", "La centralina ha memorizzato: ${acc.dtcs.joinToString()}. Apri l'app per i dettagli.", 2, "Codici errore")
         else if (acc.pending.isNotEmpty()) alarm("pend", "Problema in sospeso", "Codici in sospeso: ${acc.pending.joinToString()}. Potrebbe essere l'inizio di un guasto.", 1, "Codici errore")
 
+        val fuelPid = 0x5E in sup
+        if (!fuelPid) Live.log("Consumo non fornito dalla centralina: lo stimo")
+        Eco.live.value = Eco.State()
         val fast = PIDS.filter { it.pid in FAST && it.pid in sup }
         val slow = PIDS.filter { it.pid !in FAST && it.pid in sup }
         val values = HashMap<String, Double>()
@@ -178,8 +184,15 @@ class Recorder(private val ctx: Context, private val elm: Elm) {
                 fails = 0
                 val m = values["map"]; val b = values["baro"]
                 if (m != null && b != null) values["boost"] = (m - b) / 100.0
+                if (!fuelPid) {
+                    val r = values["rpm"]; val l = values["load"]
+                    if (r != null && l != null) values["fuel_rate"] = Eco.estimateFuel(r, l)
+                }
                 val now = System.currentTimeMillis()
-                acc.add(values, (now - lastT) / 1000.0, now); lastT = now
+                val dt = (now - lastT) / 1000.0
+                acc.add(values, dt, now)
+                if (acc.engineStarted) eco.add(values, dt, !fuelPid)
+                lastT = now
                 Live.values.value = HashMap(values)
                 liveChecks(values, now)
                 if (now - lastSample >= 1000 && acc.engineStarted) {
@@ -230,7 +243,7 @@ class Recorder(private val ctx: Context, private val elm: Elm) {
         try {
             if (buf.isNotEmpty()) db.addSamples(tripId, buf)
             if (!acc.engineStarted && acc.dtcs.isEmpty()) { db.deleteTrip(tripId); Live.log("Quadro acceso senza avviare: niente viaggio"); return }
-            val metrics = acc.metrics()
+            val metrics = acc.metrics() + eco.metrics()
             val hist = db.trips(60).filter { it.id != tripId }.map { it.metrics }
             val findings = (Health.evaluate(metrics, hist, acc.dtcs.toList(), acc.pending.toList(), acc.mil) +
                 liveFindings.filter { it.cat != "Codici errore" }).distinctBy { it.title }

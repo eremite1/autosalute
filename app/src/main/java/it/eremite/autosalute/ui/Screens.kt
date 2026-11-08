@@ -27,6 +27,7 @@ import it.eremite.autosalute.data.Trip
 import it.eremite.autosalute.health.Cat
 import it.eremite.autosalute.health.Finding
 import it.eremite.autosalute.health.Health
+import it.eremite.autosalute.health.ECO_LABELS
 import it.eremite.autosalute.obd.LABELS
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -232,7 +233,7 @@ fun TripsScreen() {
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(dayFmt.format(Date(t.start)), color = C.text, fontWeight = FontWeight.SemiBold)
-                    Text("${"%.1f".format(t.km)} km · ${(t.dur / 60).toInt()} min" + (if (t.cons.isNaN()) "" else " · ${"%.1f".format(t.cons)} L/100km"),
+                    Text("${"%.1f".format(t.km)} km · ${(t.dur / 60).toInt()} min" + ((if (t.cons.isNaN()) "" else " · ${"%.1f".format(t.cons)} L/100km") + (t.metrics["eco_score"]?.let { " · eco ${it.toInt()}" } ?: ""),
                         color = C.dim, fontSize = 13.sp)
                 }
                 val w = t.findings.count { it.sev >= 1 }
@@ -272,7 +273,7 @@ private fun TripDetail(t: Trip, back: () -> Unit) {
         Section("Valori misurati")
         Box2(Modifier.fillMaxWidth()) {
             t.metrics.entries.sortedBy { it.key }.forEach { (k, v) ->
-                val lab = Health.metric(k)?.let { it.label + " (" + it.unit + ")" } ?: k
+                val lab = Health.metric(k)?.let { it.label + " (" + it.unit + ")" } ?: ECO_LABELS[k] ?: k
                 Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(lab, color = C.dim, fontSize = 13.sp, modifier = Modifier.weight(1f))
                     Text(Health.fmt(v), color = C.text, fontSize = 13.sp)
