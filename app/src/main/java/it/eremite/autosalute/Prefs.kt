@@ -13,6 +13,8 @@ object Prefs {
     fun type(c: Context): String = p(c).getString("type", "auto") ?: "auto"
     fun sentinel(c: Context): Boolean = p(c).getBoolean("sentinel", false)
     fun lastFail(c: Context): Long = p(c).getLong("lastFail", 0)
+    fun autostart(c: Context): Boolean = p(c).getBoolean("autostart", true)
+    fun setAutostart(c: Context, v: Boolean) = p(c).edit().putBoolean("autostart", v).apply()
 
     fun setDevice(c: Context, mac: String, name: String?, type: String) =
         p(c).edit().putString("mac", mac).putString("name", name).putString("type", type).apply()

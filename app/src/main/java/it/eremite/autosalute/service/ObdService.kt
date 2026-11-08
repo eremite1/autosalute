@@ -22,6 +22,8 @@ import it.eremite.autosalute.Prefs
 import it.eremite.autosalute.R
 import it.eremite.autosalute.Updater
 import it.eremite.autosalute.data.Db
+import it.eremite.autosalute.data.Backup
+import it.eremite.autosalute.data.MaintNotify
 import it.eremite.autosalute.data.Sample
 import it.eremite.autosalute.data.Trip
 import it.eremite.autosalute.health.Finding
@@ -133,6 +135,7 @@ class ObdService : Service() {
 
         fun start(ctx: Context, reason: String) {
             if (running || Prefs.mac(ctx) == null) return
+            if (reason != "manuale" && !Prefs.autostart(ctx)) return
             if (reason != "manuale" && System.currentTimeMillis() - Prefs.lastFail(ctx) < 120_000) return
             try {
                 ctx.startForegroundService(Intent(ctx, ObdService::class.java))
@@ -272,6 +275,8 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
             )
             db.prune()
             Live.tripsVersion.value++
+            try { MaintNotify.check(ctx) } catch (_: Exception) {}
+            Backup.auto(ctx)
             val warn = findings.count { it.sev >= 1 }
             App.notify(
                 ctx, App.CH_TRIP, 50, "Viaggio salvato · salute $score/100",
@@ -310,6 +315,7 @@ object Watch {
     @SuppressLint("MissingPermission")
     fun arm(ctx: Context) {
         val mac = Prefs.mac(ctx) ?: return
+        if (!Prefs.autostart(ctx)) return
         try {
             val cdm = ctx.getSystemService(android.companion.CompanionDeviceManager::class.java)
             @Suppress("DEPRECATION") cdm?.startObservingDevicePresence(mac)

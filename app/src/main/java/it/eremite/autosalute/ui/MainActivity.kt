@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import it.eremite.autosalute.Live
 import it.eremite.autosalute.Prefs
 import it.eremite.autosalute.Updater
+import it.eremite.autosalute.data.Backup
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import it.eremite.autosalute.service.ObdService
@@ -41,6 +42,36 @@ class MainActivity : ComponentActivity() {
 
     private val perms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
     private val cdmLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {}
+    val toast = mutableStateOf<String?>(null)
+
+    /** Crea il file di backup (l'utente sceglie Google Drive e la cartella). */
+    private val createBackup = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            Backup.setTarget(this, uri)
+            lifecycleScope.launch {
+                val err = Backup.runNow(this@MainActivity, uri)
+                Toast.makeText(this@MainActivity, err?.let { "Backup non riuscito: $it" } ?: "Backup salvato. D'ora in poi si aggiorna da solo.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    private val openBackup = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) lifecycleScope.launch {
+            val msg = Backup.restore(this@MainActivity, uri)
+            Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+            refresh.intValue++
+        }
+    }
+    fun chooseBackup() = createBackup.launch("AutoSalute-backup.json")
+    fun chooseRestore() = openBackup.launch(arrayOf("application/json", "application/octet-stream", "text/plain", "*/*"))
+    fun backupNow() = lifecycleScope.launch {
+        val err = Backup.runNow(this@MainActivity)
+        Toast.makeText(this@MainActivity, err?.let { "Backup non riuscito: $it" } ?: "Backup aggiornato", Toast.LENGTH_SHORT).show()
+    }
+    fun setAutostart(v: Boolean) {
+        Prefs.setAutostart(this, v)
+        if (v) Watch.arm(this) else { Watch.disarm(this); Prefs.setSentinel(this, false); stopNow() }
+        refresh.intValue++
+    }
     val refresh = mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -126,8 +157,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun Root(act: MainActivity) {
     var tab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Salute" to Icons.Filled.Favorite, "Live" to Icons.Filled.PlayArrow, "Eco" to Icons.Filled.Star, "Viaggi" to Icons.AutoMirrored.Filled.List,
-        "Tendenze" to Icons.Filled.DateRange, "Imposta" to Icons.Filled.Settings)
+    val tabs = listOf("Salute" to Icons.Filled.Favorite, "Eco" to Icons.Filled.Star, "Viaggi" to Icons.AutoMirrored.Filled.List,
+        "Statistiche" to Icons.Filled.DateRange, "Officina" to Icons.Filled.Build, "Imposta" to Icons.Filled.Settings)
     Scaffold(
         containerColor = C.bg,
         bottomBar = {
@@ -145,11 +176,11 @@ fun Root(act: MainActivity) {
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             when (tab) {
-                0 -> HomeScreen(act) { tab = 5 }
-                1 -> LiveScreen()
-                2 -> EcoScreen()
-                3 -> TripsScreen()
-                4 -> TrendsScreen()
+                0 -> HomeScreen(act, goMaint = { tab = 4 }) { tab = 5 }
+                1 -> EcoScreen()
+                2 -> TripsScreen()
+                3 -> TrendsScreen()
+                4 -> MaintScreen()
                 else -> SetupScreen(act)
             }
         }

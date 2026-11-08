@@ -20,7 +20,12 @@ class Trip(
     val metrics: Map<String, Double>, val findings: List<Finding>, val dtcs: List<String>
 )
 
-class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.db", null, 1) {
+class MaintEntry(
+    val id: Long, val ts: Long, val km: Double, val type: String, val parts: List<String>,
+    val cost: Double, val place: String, val notes: String
+)
+
+class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -33,9 +38,109 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.d
             intake REAL, maf REAL, boost REAL, rail REAL, fuel REAL, volt REAL, oil REAL)"""
         )
         db.execSQL("CREATE INDEX s_trip ON samples(trip)")
+        createMaint(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, o: Int, n: Int) {}
+    private fun createMaint(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS maint(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, km REAL,
+            type TEXT, parts TEXT, cost REAL, place TEXT, notes TEXT)"""
+        )
+    }
+
+    override fun onUpgrade(db: SQLiteDatabase, o: Int, n: Int) {
+        if (o < 2) createMaint(db)
+    }
+
+    // ---------------------------------------------------------------- manutenzione
+    fun saveMaint(m: MaintEntry): Long {
+        val cv = ContentValues().apply {
+            put("ts", m.ts); put("km", m.km); put("type", m.type)
+            put("parts", JSONArray(m.parts).toString()); put("cost", m.cost)
+            put("place", m.place); put("notes", m.notes)
+        }
+        return if (m.id > 0) { writableDatabase.update("maint", cv, "id=?", arrayOf(m.id.toString())); m.id }
+        else writableDatabase.insert("maint", null, cv)
+    }
+
+    fun deleteMaint(id: Long) { writableDatabase.delete("maint", "id=?", arrayOf(id.toString())) }
+
+    fun maint(): List<MaintEntry> {
+        val out = ArrayList<MaintEntry>()
+        readableDatabase.rawQuery("SELECT * FROM maint ORDER BY ts DESC, id DESC", null).use { c ->
+            while (c.moveToNext()) {
+                val pj = JSONArray(c.getString(c.getColumnIndexOrThrow("parts")) ?: "[]")
+                out.add(
+                    MaintEntry(
+                        c.getLong(c.getColumnIndexOrThrow("id")), c.getLong(c.getColumnIndexOrThrow("ts")),
+                        c.getDouble(c.getColumnIndexOrThrow("km")), c.getString(c.getColumnIndexOrThrow("type")) ?: "",
+                        (0 until pj.length()).map { pj.getString(it) }, c.getDouble(c.getColumnIndexOrThrow("cost")),
+                        c.getString(c.getColumnIndexOrThrow("place")) ?: "", c.getString(c.getColumnIndexOrThrow("notes")) ?: ""
+                    )
+                )
+            }
+        }
+        return out
+    }
+
+    /** Km percorsi (registrati dall'app) dopo un certo momento. */
+    fun kmSince(ts: Long): Double =
+        readableDatabase.rawQuery("SELECT COALESCE(SUM(km),0) FROM trips WHERE ende IS NOT NULL AND start > ?", arrayOf(ts.toString())).use {
+            if (it.moveToFirst()) it.getDouble(0) else 0.0
+        }
+
+    // ---------------------------------------------------------------- backup
+    /** Esporta viaggi (riassunti) e manutenzione. I campioni secondo per secondo non sono inclusi. */
+    fun exportJson(): JSONObject {
+        val trips = JSONArray()
+        readableDatabase.rawQuery("SELECT * FROM trips WHERE ende IS NOT NULL", null).use { c ->
+            while (c.moveToNext()) trips.put(rowJson(c))
+        }
+        val maint = JSONArray()
+        readableDatabase.rawQuery("SELECT * FROM maint", null).use { c -> while (c.moveToNext()) maint.put(rowJson(c)) }
+        return JSONObject().put("trips", trips).put("maint", maint)
+    }
+
+    private fun rowJson(c: android.database.Cursor): JSONObject {
+        val o = JSONObject()
+        for (i in 0 until c.columnCount) {
+            val k = c.getColumnName(i)
+            if (k == "id") continue
+            when (c.getType(i)) {
+                android.database.Cursor.FIELD_TYPE_INTEGER -> o.put(k, c.getLong(i))
+                android.database.Cursor.FIELD_TYPE_FLOAT -> { val d = c.getDouble(i); if (!d.isNaN() && !d.isInfinite()) o.put(k, d) }
+                android.database.Cursor.FIELD_TYPE_STRING -> o.put(k, c.getString(i))
+                else -> {}
+            }
+        }
+        return o
+    }
+
+    /** Ripristina: sostituisce viaggi e manutenzione con quelli del backup. */
+    fun importJson(j: JSONObject) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("samples", null, null); db.delete("trips", null, null); db.delete("maint", null, null)
+            fun ins(table: String, arr: JSONArray?) {
+                if (arr == null) return
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val cv = ContentValues()
+                    o.keys().forEach { k ->
+                        when (val v = o.get(k)) {
+                            is Int -> cv.put(k, v.toLong()); is Long -> cv.put(k, v)
+                            is Double -> cv.put(k, v); is Number -> cv.put(k, v.toDouble())
+                            is String -> cv.put(k, v)
+                        }
+                    }
+                    db.insert(table, null, cv)
+                }
+            }
+            ins("trips", j.optJSONArray("trips")); ins("maint", j.optJSONArray("maint"))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
 
     fun startTrip(t: Long): Long = writableDatabase.insert("trips", null, ContentValues().apply { put("start", t) })
 

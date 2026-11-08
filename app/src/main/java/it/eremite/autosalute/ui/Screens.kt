@@ -22,6 +22,7 @@ import it.eremite.autosalute.Live
 import it.eremite.autosalute.Prefs
 import it.eremite.autosalute.Updater
 import it.eremite.autosalute.data.Db
+import it.eremite.autosalute.data.Backup
 import it.eremite.autosalute.data.Sample
 import it.eremite.autosalute.data.Trip
 import it.eremite.autosalute.health.Cat
@@ -48,7 +49,7 @@ fun rememberTrips(): List<Trip> {
 }
 
 @Composable
-private fun Header(title: String, sub: String? = null) {
+fun Header(title: String, sub: String? = null) {
     Column(Modifier.padding(top = 24.dp, bottom = 4.dp)) {
         Text(title, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = C.text)
         if (sub != null) Text(sub, color = C.dim, fontSize = 14.sp)
@@ -56,7 +57,7 @@ private fun Header(title: String, sub: String? = null) {
 }
 
 @Composable
-private fun ConnChip() {
+fun ConnChip() {
     val conn by Live.connected.collectAsState()
     val st by Live.status.collectAsState()
     Row(
@@ -70,7 +71,7 @@ private fun ConnChip() {
 
 // ------------------------------------------------------------------ SALUTE
 @Composable
-fun HomeScreen(act: MainActivity, goSetup: () -> Unit) {
+fun HomeScreen(act: MainActivity, goMaint: () -> Unit, goSetup: () -> Unit) {
     val trips = rememberTrips()
     val live by Live.alerts.collectAsState()
     val conn by Live.connected.collectAsState()
@@ -91,6 +92,7 @@ fun HomeScreen(act: MainActivity, goSetup: () -> Unit) {
         Header("La tua Sandero", last?.let { "Ultimo viaggio: " + dayFmt.format(Date(it.start)) })
         Spacer(Modifier.height(8.dp)); ConnChip()
         UpdateBox(always = false)
+        MaintAlert(goMaint)
         Box(Modifier.fillMaxWidth().padding(top = 12.dp), contentAlignment = Alignment.Center) { ScoreRing(score, label) }
 
         if (Prefs.mac(act) == null) {
@@ -165,15 +167,12 @@ private fun Stat(label: String, v: String) {
 
 // ------------------------------------------------------------------ LIVE
 @Composable
-fun LiveScreen() {
+fun LiveGrid() {
     val vals by Live.values.collectAsState()
-    val conn by Live.connected.collectAsState()
     val order = listOf("rpm", "speed", "coolant", "volt", "boost", "load", "rail", "maf", "fuel_rate", "intake", "oil",
         "ambient", "pedal", "throttle", "egr", "egr_err", "baro", "map", "fuel_level", "volt_ecu", "runtime", "dist_clear", "dist_mil")
     val keys = order.filter { vals.containsKey(it) } + vals.keys.filter { it !in order }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-        Header("Dal vivo", if (conn) "Valori letti in questo momento" else "Si aggiorna quando sei collegato all'auto")
-        Spacer(Modifier.height(8.dp)); ConnChip(); Spacer(Modifier.height(12.dp))
+    Column(Modifier.fillMaxWidth()) {
         if (keys.isEmpty()) Text("Nessun dato ancora.", color = C.dim)
         keys.chunked(2).forEach { row ->
             Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -193,7 +192,6 @@ fun LiveScreen() {
                 if (row.size == 1) Spacer(Modifier.weight(1f))
             }
         }
-        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -290,7 +288,10 @@ fun TrendsScreen() {
     val trips = rememberTrips()
     val chrono = trips.reversed().takeLast(60)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-        Header("Tendenze", "Come cambia la tua auto viaggio dopo viaggio. La fascia è il tuo valore normale.")
+        Header("Statistiche", "Consumi nel tempo e salute dei componenti")
+        ConsumptionStats(trips)
+        Section("Tendenze dei componenti")
+        Text("Come cambia la tua auto viaggio dopo viaggio. La fascia è il tuo valore normale.", color = C.dim, fontSize = 13.sp)
         if (chrono.size < 2) Text("Servono almeno 2 viaggi.", color = C.dim, modifier = Modifier.padding(top = 16.dp))
         Cat.ALL.filter { it != Cat.CODICI }.forEach { cat ->
             val ms = Health.METRICS.filter { m -> m.cat == cat && chrono.count { it.metrics[m.key] != null } >= 2 }
@@ -349,7 +350,17 @@ fun SetupScreen(act: MainActivity) {
         }
 
         Section("2 · Avvio automatico")
+        val auto = remember(r) { Prefs.autostart(act) }
         Box2(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Avvio automatico in sottofondo", color = C.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (auto) "L'app parte da sola quando accendi il quadro." else "Spento: l'app registra solo se premi \"Collega ora\".",
+                        color = C.dim, fontSize = 12.sp)
+                }
+                Switch(checked = auto, onCheckedChange = { act.setAutostart(it) })
+            }
+            Spacer(Modifier.height(14.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Dot(if (batt) C.ok else C.warn); Spacer(Modifier.width(8.dp))
                 Text(if (batt) "Risparmio batteria disattivato per l'app" else "Android potrebbe bloccare l'avvio automatico",
@@ -375,12 +386,15 @@ fun SetupScreen(act: MainActivity) {
             TextButton(onClick = { act.askPermissions() }) { Text("Ricontrolla i permessi") }
         }
 
+        Section("Backup su Google Drive")
+        BackupBox(act)
+
         Section("Aggiornamenti")
         UpdateBox(always = true)
 
         Section("Dati")
         Box2(Modifier.fillMaxWidth()) {
-            Text("I viaggi restano solo sul tuo telefono.", color = C.dim, fontSize = 13.sp)
+            Text("Cancella lo storico dei viaggi (la manutenzione resta).", color = C.dim, fontSize = 13.sp)
             TextButton(onClick = { confirm = true }) { Text("Cancella tutti i viaggi", color = C.bad) }
         }
 
@@ -446,5 +460,45 @@ fun UpdateBox(always: Boolean) {
                 OutlinedButton(onClick = { scope.launch { Updater.check(ctx) } }) { Text("Controlla aggiornamenti") }
             }
         }
+    }
+}
+
+
+@Composable
+fun BackupBox(act: MainActivity) {
+    val bv by Backup.status.collectAsState()
+    val r by act.refresh
+    val target = remember(bv, r) { Backup.target(act) }
+    val last = remember(bv, r) { Backup.lastOk(act) }
+    val err = remember(bv, r) { Backup.lastError(act) }
+    Box2(Modifier.fillMaxWidth()) {
+        if (target == null) {
+            Text("Salva viaggi, statistiche e manutenzione sul tuo Google Drive. Se cambi telefono non perdi niente.",
+                color = C.text, fontSize = 14.sp)
+            Spacer(Modifier.height(6.dp))
+            Text("Premi il pulsante, nel menu in alto a sinistra scegli Drive (il tuo account Google) e premi Salva.",
+                color = C.dim, fontSize = 12.sp)
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = { act.chooseBackup() }) { Text("Attiva backup su Drive") }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Dot(if (err != null) C.warn else C.ok); Spacer(Modifier.width(8.dp))
+                Text(if (err != null) "Ultimo backup non riuscito" else "Backup attivo", color = C.text, fontWeight = FontWeight.SemiBold)
+            }
+            Text(
+                (if (last > 0) "Ultimo salvataggio: " + dayFmt.format(Date(last)) else "Nessun salvataggio ancora") +
+                    ". Si aggiorna da solo dopo ogni viaggio.",
+                color = C.dim, fontSize = 12.sp
+            )
+            if (err != null) Text("Errore: $err. Se continua, premi \"Cambia file\" e scegli di nuovo Drive.", color = C.warn, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { act.backupNow() }) { Text("Salva ora") }
+                OutlinedButton(onClick = { act.chooseBackup() }) { Text("Cambia file") }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("Telefono nuovo? Installa l'app e ripristina dal file su Drive:", color = C.dim, fontSize = 12.sp)
+        TextButton(onClick = { act.chooseRestore() }) { Text("Ripristina da un backup") }
     }
 }

@@ -78,6 +78,9 @@ fun EcoScreen() {
         }
         if (s.estimated) Text("Consumi stimati: la centralina non li fornisce direttamente.", color = C.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
 
+        Section("Tutti i valori dal vivo")
+        LiveGrid()
+
         Section("Come si guida in zona verde")
         Box2(Modifier.fillMaxWidth()) {
             listOf(
