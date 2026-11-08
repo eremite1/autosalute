@@ -29,6 +29,8 @@ import it.eremite.autosalute.health.Health
 import it.eremite.autosalute.health.TripAcc
 import it.eremite.autosalute.health.Eco
 import it.eremite.autosalute.health.EcoAcc
+import it.eremite.autosalute.health.Warmup
+import it.eremite.autosalute.health.WarmState
 import it.eremite.autosalute.obd.*
 import kotlinx.coroutines.*
 import java.io.IOException
@@ -110,7 +112,7 @@ class ObdService : Service() {
             if (!elm.init()) { Live.log("La centralina non risponde (quadro spento?)"); return false }
             Live.connected.value = true
             update("Collegato all'auto: sto registrando")
-            Recorder(this, elm).run()
+            Recorder(this, elm) { update(it) }.run()
             return true
         } finally {
             link.close()
@@ -145,10 +147,15 @@ class ObdService : Service() {
 }
 
 /** Registra i dati del viaggio e controlla gli allarmi in tempo reale. */
-class Recorder(private val ctx: Context, private val elm: Elm) {
+class Recorder(private val ctx: Context, private val elm: Elm, private val status: (String) -> Unit) {
     private val db = Db.get(ctx)
     private val acc = TripAcc()
     private val eco = EcoAcc()
+    private var lastWarmTitle = ""
+    private val warm = Warmup { msg ->
+        App.notify(ctx, App.CH_TRIP, 70, "Motore pronto", msg)
+        Live.log(msg)
+    }
     private val sent = HashSet<String>()
     private val liveFindings = ArrayList<Finding>()
     private var lowVoltSince = 0L
@@ -166,6 +173,7 @@ class Recorder(private val ctx: Context, private val elm: Elm) {
         val fuelPid = 0x5E in sup
         if (!fuelPid) Live.log("Consumo non fornito dalla centralina: lo stimo")
         Eco.live.value = Eco.State()
+        Warmup.live.value = WarmState()
         val fast = PIDS.filter { it.pid in FAST && it.pid in sup }
         val slow = PIDS.filter { it.pid !in FAST && it.pid in sup }
         val values = HashMap<String, Double>()
@@ -192,6 +200,15 @@ class Recorder(private val ctx: Context, private val elm: Elm) {
                 val dt = (now - lastT) / 1000.0
                 acc.add(values, dt, now)
                 if (acc.engineStarted) eco.add(values, dt, !fuelPid)
+                warm.add(values, now, dt, acc.engineStarted)
+                Warmup.live.value.let { w ->
+                    val t = when (w.phase) {
+                        -1 -> "Collegato: in attesa dell'avviamento"
+                        3 -> "Collegato all'auto: sto registrando"
+                        else -> w.title + (w.maxRpm?.let { " · max $it giri" } ?: "")
+                    }
+                    if (t != lastWarmTitle) { lastWarmTitle = t; status(t) }
+                }
                 lastT = now
                 Live.values.value = HashMap(values)
                 liveChecks(values, now)

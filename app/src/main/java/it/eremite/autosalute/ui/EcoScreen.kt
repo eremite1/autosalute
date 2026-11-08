@@ -42,6 +42,8 @@ fun EcoScreen() {
             Text(if (conn) "Tieni il pallino nella zona verde" else "Si attiva quando sei collegato all'auto", color = C.dim, fontSize = 14.sp)
         }
 
+        WarmCard()
+
         // Consiglio grande, leggibile con un'occhiata
         Box(
             Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(18.dp))
@@ -144,6 +146,76 @@ private fun EfficiencyMap(s: Eco.State, modifier: Modifier) {
             drawCircle(col.copy(alpha = 0.3f), 30f, c)
             drawCircle(col, 16f, c)
             drawCircle(C.bg, 6f, c)
+        }
+    }
+}
+
+@Composable
+fun WarmCard() {
+    val w by it.eremite.autosalute.health.Warmup.live.collectAsState()
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(w.readySince) { while (true) { now = System.currentTimeMillis(); kotlinx.coroutines.delay(5000) } }
+    if (w.phase == -1 && w.coolant.isNaN()) return
+
+    // Una volta pronto, dopo 1 minuto resta solo una piccola etichetta
+    if (w.phase == 3 && (!w.wasCold || now - w.readySince > 60_000)) {
+        Row(
+            Modifier.padding(top = 12.dp).clip(RoundedCornerShape(50)).background(C.card).padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Dot(C.ok, 8); Spacer(Modifier.width(8.dp))
+            Text("Motore in temperatura" + (if (!w.coolant.isNaN()) " · ${w.coolant.toInt()}°C" else ""), color = C.text, fontSize = 13.sp)
+        }
+        return
+    }
+
+    val col = when {
+        w.overRev -> C.bad
+        w.phase == 3 -> C.ok
+        w.phase == 2 -> C.info
+        w.phase == -1 -> C.dim
+        else -> C.warn
+    }
+    Column(
+        Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(18.dp))
+            .background(C.card).padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(if (w.phase == 3) "✓" else "🌡", fontSize = 22.sp, color = col)
+            Spacer(Modifier.width(10.dp))
+            Text(w.title, color = col, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        }
+        if (w.overRev && w.maxRpm != null) {
+            Text("Troppi giri a motore freddo: resta sotto i ${w.maxRpm}", color = C.bad, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 6.dp))
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(w.detail, color = C.text.copy(alpha = 0.85f), fontSize = 14.sp, lineHeight = 19.sp)
+        Spacer(Modifier.height(12.dp))
+
+        // barra di avanzamento
+        Box(Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(6.dp)).background(C.line)) {
+            Box(Modifier.fillMaxWidth(w.progress.coerceIn(0.02f, 1f)).fillMaxHeight().clip(RoundedCornerShape(6.dp)).background(col))
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(
+                listOfNotNull(
+                    if (w.coolant.isNaN()) null else "Liquido ${w.coolant.toInt()}°C",
+                    if (w.oil.isNaN()) null else "Olio ${w.oil.toInt()}°C",
+                ).joinToString(" · "),
+                color = C.dim, fontSize = 13.sp
+            )
+            val m = w.minutesLeft
+            Text(
+                when {
+                    w.phase == 3 -> "pronto"
+                    w.maxRpm != null && m != null && m >= 0.5 -> "max ${w.maxRpm} giri · ~${m.toInt().coerceAtLeast(1)} min"
+                    w.maxRpm != null -> "max ${w.maxRpm} giri"
+                    else -> ""
+                },
+                color = col, fontSize = 13.sp, fontWeight = FontWeight.SemiBold
+            )
         }
     }
 }
