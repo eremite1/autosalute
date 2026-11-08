@@ -233,7 +233,7 @@ fun TripsScreen() {
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(dayFmt.format(Date(t.start)), color = C.text, fontWeight = FontWeight.SemiBold)
-                    Text("${"%.1f".format(t.km)} km · ${(t.dur / 60).toInt()} min" + ((if (t.cons.isNaN()) "" else " · ${"%.1f".format(t.cons)} L/100km") + (t.metrics["eco_score"]?.let { " · eco ${it.toInt()}" } ?: ""),
+                    Text("${"%.1f".format(t.km)} km · ${(t.dur / 60).toInt()} min" + (if (t.cons.isNaN()) "" else " · ${"%.1f".format(t.cons)} L/100km") + (t.metrics["eco_score"]?.let { " · eco ${it.toInt()}" } ?: ""),
                         color = C.dim, fontSize = 13.sp)
                 }
                 val w = t.findings.count { it.sev >= 1 }

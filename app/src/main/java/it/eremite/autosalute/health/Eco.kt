@@ -89,13 +89,13 @@ class EcoAcc {
             speed < 3 -> "In attesa di partire"
             coasting -> "Ottimo: in rilascio il gasolio è a zero"
             rpm > 3000 -> "Giri troppo alti: cambia marcia"
-            rpm > RPM_HI && load < 70 && !topGear -> "Passa alla marcia superiore"
-            rpm > RPM_HI && load >= 70 -> "Accelera con più dolcezza"
+            rpm > Eco.RPM_HI && load < 70 && !topGear -> "Passa alla marcia superiore"
+            rpm > Eco.RPM_HI && load >= 70 -> "Accelera con più dolcezza"
             rpm < 1150 && load > 80 -> "Motore in sofferenza: scala una marcia"
             load > 92 && !pedal.isNaN() && pedal > 85 -> "Pedale a fondo: alleggerisci il piede"
             zone == 0 -> "Perfetto: zona di massima efficienza"
-            load < LOAD_LO && rpm > 1800 && !topGear -> "Puoi salire di marcia"
-            load < LOAD_LO -> "Andatura leggera: va bene così"
+            load < Eco.LOAD_LO && rpm > 1800 && !topGear -> "Puoi salire di marcia"
+            load < Eco.LOAD_LO -> "Andatura leggera: va bene così"
             else -> "Quasi in zona verde"
         }
 
