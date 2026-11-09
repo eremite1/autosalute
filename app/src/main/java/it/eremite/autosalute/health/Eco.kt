@@ -129,4 +129,7 @@ val ECO_LABELS = mapOf(
     "eco_green" to "Tempo in zona verde (%)",
     "eco_red" to "Tempo in zona rossa (%)",
     "eco_coast" to "Tempo in rilascio (%)",
+    "app_mah" to "Batteria usata dall'app (mAh, stima)",
+    "app_batt_pct" to "Batteria usata dall'app (%, stima)",
+    "phone_batt_drop" to "Calo batteria del telefono (%)",
 )

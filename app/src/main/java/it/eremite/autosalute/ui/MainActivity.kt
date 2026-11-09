@@ -61,6 +61,22 @@ class MainActivity : ComponentActivity() {
             refresh.intValue++
         }
     }
+    private val locPerms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refresh.intValue++ }
+
+    /** Prima chiede la posizione, poi "Consenti sempre" (Android apre le impostazioni). */
+    fun askLocation() {
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            locPerms.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        } else {
+            Toast.makeText(this, "Scegli \"Consenti sempre\"", Toast.LENGTH_LONG).show()
+            locPerms.launch(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
+        }
+    }
+
+    fun openAppInfo() {
+        try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) } catch (_: Exception) {}
+    }
+
     fun chooseBackup() = createBackup.launch("AutoSalute-backup.json")
     fun chooseRestore() = openBackup.launch(arrayOf("application/json", "application/octet-stream", "text/plain", "*/*"))
     fun backupNow() = lifecycleScope.launch {
@@ -157,6 +173,11 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun Root(act: MainActivity) {
     var tab by remember { mutableIntStateOf(0) }
+    var diag by remember { mutableStateOf(false) }
+    if (diag) {
+        Scaffold(containerColor = C.bg) { pad -> Box(Modifier.padding(pad).fillMaxSize()) { DiagScreen { diag = false } } }
+        return
+    }
     val tabs = listOf("Salute" to Icons.Filled.Favorite, "Eco" to Icons.Filled.Star, "Viaggi" to Icons.AutoMirrored.Filled.List,
         "Statistiche" to Icons.Filled.DateRange, "Officina" to Icons.Filled.Build, "Imposta" to Icons.Filled.Settings)
     Scaffold(
@@ -176,7 +197,7 @@ fun Root(act: MainActivity) {
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             when (tab) {
-                0 -> HomeScreen(act, goMaint = { tab = 4 }) { tab = 5 }
+                0 -> HomeScreen(act, goMaint = { tab = 4 }, openDiag = { diag = true }) { tab = 5 }
                 1 -> EcoScreen()
                 2 -> TripsScreen()
                 3 -> TrendsScreen()

@@ -23,6 +23,8 @@ import it.eremite.autosalute.Prefs
 import it.eremite.autosalute.Updater
 import it.eremite.autosalute.data.Db
 import it.eremite.autosalute.data.Backup
+import it.eremite.autosalute.data.Cars
+import it.eremite.autosalute.data.GeoPoint
 import it.eremite.autosalute.data.Sample
 import it.eremite.autosalute.data.Trip
 import it.eremite.autosalute.health.Cat
@@ -43,8 +45,9 @@ private val dayFmt = SimpleDateFormat("EEE d MMM · HH:mm", Locale.ITALY)
 fun rememberTrips(): List<Trip> {
     val ctx = LocalContext.current
     val ver by Live.tripsVersion.collectAsState()
+    val car by Cars.active.collectAsState()
     var trips by remember { mutableStateOf<List<Trip>>(emptyList()) }
-    LaunchedEffect(ver) { trips = withContext(Dispatchers.IO) { Db.get(ctx).trips() } }
+    LaunchedEffect(ver, car) { trips = withContext(Dispatchers.IO) { Db.get(ctx).trips(Cars.activeId(ctx)) } }
     return trips
 }
 
@@ -71,7 +74,7 @@ fun ConnChip() {
 
 // ------------------------------------------------------------------ SALUTE
 @Composable
-fun HomeScreen(act: MainActivity, goMaint: () -> Unit, goSetup: () -> Unit) {
+fun HomeScreen(act: MainActivity, goMaint: () -> Unit, openDiag: () -> Unit, goSetup: () -> Unit) {
     val trips = rememberTrips()
     val live by Live.alerts.collectAsState()
     val conn by Live.connected.collectAsState()
@@ -89,8 +92,13 @@ fun HomeScreen(act: MainActivity, goMaint: () -> Unit, goSetup: () -> Unit) {
         else -> "Serve attenzione"
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-        Header("La tua Sandero", last?.let { "Ultimo viaggio: " + dayFmt.format(Date(it.start)) })
+        CarSwitcher(goSetup)
+        Text(last?.let { "Ultimo viaggio: " + dayFmt.format(Date(it.start)) } ?: "Nessun viaggio ancora", color = C.dim, fontSize = 14.sp)
         Spacer(Modifier.height(8.dp)); ConnChip()
+        Button(onClick = openDiag, modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = C.card2, contentColor = C.text)) {
+            Text("🔍  Diagnosi completa dell'auto", fontWeight = FontWeight.SemiBold)
+        }
         UpdateBox(always = false)
         MaintAlert(goMaint)
         Box(Modifier.fillMaxWidth().padding(top = 12.dp), contentAlignment = Alignment.Center) { ScoreRing(score, label) }
@@ -142,6 +150,7 @@ fun HomeScreen(act: MainActivity, goMaint: () -> Unit, goSetup: () -> Unit) {
             Section("Ultimo viaggio")
             TripSummary(last)
         }
+        ParkedCard()
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -245,11 +254,23 @@ fun TripsScreen() {
 private fun TripDetail(t: Trip, back: () -> Unit) {
     val ctx = LocalContext.current
     var samples by remember { mutableStateOf<List<Sample>>(emptyList()) }
-    LaunchedEffect(t.id) { samples = withContext(Dispatchers.IO) { Db.get(ctx).samples(t.id) } }
+    var route by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
+    LaunchedEffect(t.id) {
+        samples = withContext(Dispatchers.IO) { Db.get(ctx).samples(t.id) }
+        route = withContext(Dispatchers.IO) { Db.get(ctx).points(t.id) }
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
         TextButton(onClick = back, modifier = Modifier.padding(top = 12.dp)) { Text("‹ Viaggi") }
         Header(dayFmt.format(Date(t.start)), "Salute del viaggio: ${t.score}/100")
         Spacer(Modifier.height(12.dp)); TripSummary(t)
+        if (route.isNotEmpty()) {
+            Section("Percorso")
+            RouteMap(route, Modifier.fillMaxWidth().height(260.dp))
+        }
+        t.metrics["app_mah"]?.let { mah ->
+            Text("Batteria usata dall'app in questo viaggio: circa ${mah.toInt()} mAh (${"%.1f".format(t.metrics["app_batt_pct"] ?: 0.0)}%)",
+                color = C.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+        }
         if (t.dtcs.isNotEmpty()) { Section("Codici errore"); t.dtcs.forEach { Text(it, color = C.bad) } }
         if (t.findings.isNotEmpty()) { Section("Segnalazioni"); t.findings.sortedByDescending { it.sev }.forEach { FindingCard(it) } }
         val charts = listOf<Triple<String, String, (Sample) -> Double>>(
@@ -330,6 +351,9 @@ fun SetupScreen(act: MainActivity) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
         Header("Impostazioni")
 
+        Section("Le tue auto")
+        CarsBox(act)
+
         Section("1 · Lettore OBD2")
         Box2(Modifier.fillMaxWidth()) {
             if (mac == null) {
@@ -386,6 +410,12 @@ fun SetupScreen(act: MainActivity) {
             TextButton(onClick = { act.askPermissions() }) { Text("Ricontrolla i permessi") }
         }
 
+        Section("Posizione GPS")
+        GpsBox(act)
+
+        Section("Batteria del telefono")
+        BatteryBox(act)
+
         Section("Backup su Google Drive")
         BackupBox(act)
 
@@ -407,7 +437,7 @@ fun SetupScreen(act: MainActivity) {
     }
     if (confirm) AlertDialog(
         onDismissRequest = { confirm = false },
-        confirmButton = { TextButton(onClick = { Db.get(act).clear(); Live.tripsVersion.value++; confirm = false }) { Text("Cancella", color = C.bad) } },
+        confirmButton = { TextButton(onClick = { Db.get(act).clear(Cars.activeId(act)); Live.tripsVersion.value++; confirm = false }) { Text("Cancella", color = C.bad) } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("Annulla") } },
         title = { Text("Cancellare tutto?") },
         text = { Text("Perderai lo storico e l'app dovrà reimparare i valori normali della tua auto.") }

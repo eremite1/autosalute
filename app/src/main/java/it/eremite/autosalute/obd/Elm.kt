@@ -44,6 +44,9 @@ class Elm(private val link: ObdLink) {
 
     private suspend fun raw(c: String, t: Long = 1500): String = link.send(c, t)
 
+    /** Comando libero (per la diagnosi). */
+    suspend fun query(c: String, t: Long = 2500): String = raw(c, t)
+
     suspend fun init(): Boolean {
         raw("ATZ", 3000); delay(600)
         for (c in listOf("ATE0", "ATL0", "ATS0", "ATH0", "ATAT1", "ATSP0")) raw(c)
@@ -59,15 +62,15 @@ class Elm(private val link: ObdLink) {
     }
 
     /** Toglie spazi/scritte e restituisce le righe esadecimali. */
-    private fun lines(r: String): List<String> =
+    fun lines(r: String): List<String> =
         r.uppercase().split('\r', '\n').map { it.replace(" ", "").replace("SEARCHING...", "") }
             .filter { it.isNotEmpty() }
 
-    private fun clean(r: String): String = lines(r).joinToString("") { l ->
+    fun clean(r: String): String = lines(r).joinToString("") { l ->
         if (l.length > 2 && l[1] == ':') l.substring(2) else l
     }
 
-    private fun bytesAfter(hex: String, prefix: String, n: Int): IntArray? {
+    fun bytesAfter(hex: String, prefix: String, n: Int): IntArray? {
         var i = hex.indexOf(prefix)
         while (i >= 0 && i % 2 != 0) i = hex.indexOf(prefix, i + 1)
         if (i < 0) return null
@@ -141,4 +144,54 @@ class Elm(private val link: ObdLink) {
         }
         return res.toList()
     }
+
+    /** Legge un PID qualsiasi del modo 01 (nb byte di dati). */
+    suspend fun pid(pid: Int, nb: Int): IntArray? {
+        val hex = clean(raw("01%02X".format(pid)))
+        return bytesAfter(hex, "41%02X".format(pid), nb)
+    }
+
+    /** Fotografia al momento del guasto (modo 02, frame 0). */
+    suspend fun freeze(pid: Int, nb: Int): IntArray? {
+        val hex = clean(raw("02%02X00".format(pid), 2500))
+        return bytesAfter(hex, "42%02X00".format(pid), nb) ?: bytesAfter(hex, "42%02X".format(pid), nb)
+    }
+
+    /** Testo ASCII dal modo 09 (02 = telaio/VIN, 04 = calibrazione, 0A = nome centralina). */
+    suspend fun info09(pid: Int): String? {
+        val r = raw("09%02X".format(pid), 5000)
+        val ls = lines(r)
+        if (ls.any { it.contains("NODATA") || it.contains("ERROR") }) return null
+        val pre = "49%02X".format(pid)
+        val bytes = StringBuilder()
+        if (ls.any { it.length > 2 && it[1] == ':' }) {
+            val hex = ls.filter { it.length > 2 && it[1] == ':' }.joinToString("") { it.substring(2) }
+            val i = hex.indexOf(pre)
+            if (i < 0) return null
+            bytes.append(hex.substring(i + pre.length + 2)) // salta il numero di elementi
+        } else {
+            for (l in ls) {
+                val i = l.indexOf(pre)
+                if (i < 0) continue
+                val rest = l.substring(i + pre.length)
+                bytes.append(if (rest.length > 8) rest.substring(2) else rest)
+            }
+        }
+        val sb = StringBuilder()
+        var k = 0
+        while (k + 2 <= bytes.length) {
+            val v = bytes.substring(k, k + 2).toIntOrNull(16) ?: 0
+            if (v in 0x20..0x7E) sb.append(v.toChar())
+            k += 2
+        }
+        val t = sb.toString().trim()
+        return t.ifEmpty { null }
+    }
+
+    suspend fun vin(): String? {
+        val v = info09(0x02)?.filter { it.isLetterOrDigit() }?.uppercase() ?: return null
+        return if (v.length >= 17) v.takeLast(17) else null
+    }
+
+    suspend fun protocol(): String = try { raw("ATDP").trim().removePrefix("AUTO,").trim() } catch (_: Exception) { "?" }
 }

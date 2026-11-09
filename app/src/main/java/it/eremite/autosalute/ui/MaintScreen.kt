@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import it.eremite.autosalute.Live
 import it.eremite.autosalute.data.Backup
+import it.eremite.autosalute.data.Cars
 import it.eremite.autosalute.data.Db
 import it.eremite.autosalute.data.Due
 import it.eremite.autosalute.data.Maint
@@ -37,14 +38,16 @@ private fun kmFmt(v: Double) = "%,.0f".format(Locale.ITALY, v)
 fun MaintScreen() {
     val ctx = LocalContext.current
     val tv by Live.tripsVersion.collectAsState()
+    val carSel by Cars.active.collectAsState()
     var ver by remember { mutableIntStateOf(0) }
     var entries by remember { mutableStateOf<List<MaintEntry>>(emptyList()) }
     var dues by remember { mutableStateOf<List<Due>>(emptyList()) }
     var odo by remember { mutableStateOf<Double?>(null) }
-    LaunchedEffect(ver, tv) {
+    LaunchedEffect(ver, tv, carSel) {
         withContext(Dispatchers.IO) {
-            val e = Db.get(ctx).maint()
-            entries = e; dues = Maint.dues(ctx, e); odo = Maint.odometer(ctx)
+            val car = Cars.activeId(ctx)
+            val e = Db.get(ctx).maint(car)
+            entries = e; dues = Maint.dues(ctx, car, e); odo = Maint.odometer(ctx, car)
         }
     }
     var editing by remember { mutableStateOf<MaintEntry?>(null) }
@@ -274,10 +277,9 @@ private fun EntryForm(start: MaintEntry, odo: Double?, done: (Boolean) -> Unit) 
                 val k = km.toDoubleOrNull() ?: 0.0
                 val e = MaintEntry(start.id, ts, k, type.ifEmpty { "Intervento" }, parts.toList(),
                     cost.replace(',', '.').toDoubleOrNull() ?: 0.0, place.trim(), notes.trim())
-                Db.get(ctx).saveMaint(e)
+                Db.get(ctx).saveMaint(e, Cars.activeId(ctx))
                 // i km dell'intervento aggiornano il contachilometri se sono il dato più recente
-                val p = ctx.getSharedPreferences("autosalute", android.content.Context.MODE_PRIVATE)
-                if (k > 0 && ts >= p.getLong("odo_ts", 0) - 60_000) Maint.setOdometer(ctx, k, ts)
+                if (k > 0 && ts >= Maint.odoTs(ctx) - 60_000) Maint.setOdometer(ctx, k, ts)
                 done(true)
             },
             enabled = type.isNotEmpty() || parts.isNotEmpty(),
@@ -309,8 +311,9 @@ private fun EntryForm(start: MaintEntry, odo: Double?, done: (Boolean) -> Unit) 
 fun MaintAlert(goMaint: () -> Unit) {
     val ctx = LocalContext.current
     val tv by Live.tripsVersion.collectAsState()
+    val carSel by Cars.active.collectAsState()
     var due by remember { mutableStateOf<List<Due>>(emptyList()) }
-    LaunchedEffect(tv) { due = withContext(Dispatchers.IO) { Maint.dues(ctx).filter { it.status >= 1 } } }
+    LaunchedEffect(tv, carSel) { due = withContext(Dispatchers.IO) { Maint.dues(ctx).filter { it.status >= 1 } } }
     if (due.isEmpty()) return
     val bad = due.any { it.status == 2 }
     Column(

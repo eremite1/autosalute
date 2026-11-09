@@ -62,15 +62,20 @@ object Maint {
     private fun p(c: Context) = c.getSharedPreferences("autosalute", Context.MODE_PRIVATE)
 
     // ------------------------------------------------------------ contachilometri
-    fun setOdometer(c: Context, km: Double, ts: Long = System.currentTimeMillis()) {
-        p(c).edit().putFloat("odo_km", km.toFloat()).putLong("odo_ts", ts).apply()
+    private fun kKm(car: Long) = if (car == 1L) "odo_km" else "odo_km_$car"
+    private fun kTs(car: Long) = if (car == 1L) "odo_ts" else "odo_ts_$car"
+
+    fun odoTs(c: Context, car: Long = Cars.activeId(c)): Long = p(c).getLong(kTs(car), 0)
+
+    fun setOdometer(c: Context, km: Double, ts: Long = System.currentTimeMillis(), car: Long = Cars.activeId(c)) {
+        p(c).edit().putFloat(kKm(car), km.toFloat()).putLong(kTs(car), ts).apply()
     }
 
     /** Km attuali: ultimo valore inserito + km registrati dall'app da allora. Null se mai inserito. */
-    fun odometer(c: Context): Double? {
+    fun odometer(c: Context, car: Long = Cars.activeId(c)): Double? {
         val pr = p(c)
-        if (!pr.contains("odo_km")) return null
-        return pr.getFloat("odo_km", 0f) + Db.get(c).kmSince(pr.getLong("odo_ts", 0))
+        if (!pr.contains(kKm(car))) return null
+        return pr.getFloat(kKm(car), 0f) + Db.get(c).kmSince(pr.getLong(kTs(car), 0), car)
     }
 
     // ------------------------------------------------------------ intervalli personalizzati
@@ -90,8 +95,8 @@ object Maint {
     }
 
     // ------------------------------------------------------------ scadenze
-    fun dues(c: Context, entries: List<MaintEntry> = Db.get(c).maint()): List<Due> {
-        val odo = odometer(c)
+    fun dues(c: Context, car: Long = Cars.activeId(c), entries: List<MaintEntry> = Db.get(c).maint(car)): List<Due> {
+        val odo = odometer(c, car)
         val now = System.currentTimeMillis()
         val out = ArrayList<Due>()
         for (part in PARTS) {
@@ -136,15 +141,15 @@ object Maint {
     }
 
     /** Chiave usata per non ripetere la stessa notifica. */
-    fun noticeKey(d: Due) = "${d.part.key}_${d.lastTs}_${d.status}"
+    fun noticeKey(d: Due) = "${d.part.key}_${d.lastTs}_${d.status}_${d.lastKm}"
 }
 
 /** Avvisa con una notifica quando una manutenzione si avvicina o è scaduta (una volta sola per stato). */
 object MaintNotify {
-    fun check(c: Context) {
+    fun check(c: Context, car: Long = Cars.activeId(c)) {
         val p = c.getSharedPreferences("autosalute", Context.MODE_PRIVATE)
         val sent = p.getStringSet("maint_sent", emptySet())!!.toMutableSet()
-        val due = Maint.dues(c).filter { it.status >= 1 }
+        val due = Maint.dues(c, car).filter { it.status >= 1 }
         var id = 200
         for (d in due) {
             val k = Maint.noticeKey(d)

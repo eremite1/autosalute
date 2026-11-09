@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import it.eremite.autosalute.Live
 import it.eremite.autosalute.health.Eco
+import it.eremite.autosalute.service.GpsTracker
 
 private const val RPM_MIN = 700.0
 private const val RPM_MAX = 4200.0
@@ -77,6 +78,8 @@ fun EcoScreen() {
             Big("In rilascio", if (s.coastPct.isNaN()) "–" else "%.0f".format(s.coastPct), "%", Modifier.weight(1f))
         }
         if (s.estimated) Text("Consumi stimati: la centralina non li fornisce direttamente.", color = C.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+
+        LiveMap()
 
         Section("Tutti i valori dal vivo")
         LiveGrid()
@@ -221,4 +224,16 @@ fun WarmCard() {
             )
         }
     }
+}
+
+
+@Composable
+private fun LiveMap() {
+    val track by GpsTracker.track.collectAsState()
+    val conn by Live.connected.collectAsState()
+    if (!conn || track.isEmpty()) return
+    val cur = track.last()
+    Section("Posizione dal vivo")
+    RouteMap(track, Modifier.fillMaxWidth().height(220.dp), follow = true, endLabel = "Sei qui")
+    if (!cur.speed.isNaN()) Text("Velocità GPS: ${cur.speed.toInt()} km/h", color = C.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
 }

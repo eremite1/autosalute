@@ -110,7 +110,7 @@ object Health {
         // --- Confronto con la storia della TUA auto ---
         val n = hist.size
         if (n < 5) {
-            f += Finding("Apprendimento", 0, "Sto imparando la tua auto", "Servono ancora ${5 - n} viaggi per conoscere i valori normali della tua Sandero. Dopo, ti avviso anche delle piccole variazioni.")
+            f += Finding("Apprendimento", 0, "Sto imparando la tua auto", "Servono ancora ${5 - n} viaggi per conoscere i valori normali di questa auto. Dopo, ti avviso anche delle piccole variazioni.")
         } else {
             for (m in METRICS) {
                 val x = g(m.key) ?: continue

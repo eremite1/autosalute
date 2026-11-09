@@ -23,6 +23,7 @@ import it.eremite.autosalute.R
 import it.eremite.autosalute.Updater
 import it.eremite.autosalute.data.Db
 import it.eremite.autosalute.data.Backup
+import it.eremite.autosalute.data.Cars
 import it.eremite.autosalute.data.MaintNotify
 import it.eremite.autosalute.data.Sample
 import it.eremite.autosalute.data.Trip
@@ -48,7 +49,15 @@ class ObdService : Service() {
         if (intent?.action == ACTION_STOP) {
             job?.cancel(); stopSelf(); return START_NOT_STICKY
         }
-        startForeground(1, note("Cerco il lettore OBD2…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        val n = note("Cerco il lettore OBD2…")
+        try {
+            val type = if (GpsTracker.allowed(this))
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            else ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            startForeground(1, n, type)
+        } catch (e: Exception) {
+            startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        }
         running = true
         if (job?.isActive != true) job = scope.launch { loop() }
         return if (Prefs.sentinel(this)) START_STICKY else START_NOT_STICKY
@@ -103,7 +112,9 @@ class ObdService : Service() {
     private suspend fun session(mac: String): Boolean {
         update("Collegamento al lettore…")
         val (link, type) = try { openLink(this, mac, Prefs.type(this)) } catch (e: IOException) {
-            Live.log("Lettore non raggiungibile: ${e.message}"); return false
+            Live.log("Lettore non raggiungibile: ${e.message}")
+            DiagCtl.fail("Non riesco a collegarmi al lettore OBD2. Controlla che sia inserito e che il quadro sia acceso, poi riprova.")
+            return false
         }
         if (Prefs.type(this) == "auto") Prefs.setType(this, type)
         Live.log("Collegato via ${if (type == "ble") "Bluetooth LE" else "Bluetooth classico"}")
@@ -111,7 +122,11 @@ class ObdService : Service() {
         try {
             val elm = Elm(link)
             update("Dialogo con la centralina…")
-            if (!elm.init()) { Live.log("La centralina non risponde (quadro spento?)"); return false }
+            if (!elm.init()) {
+                Live.log("La centralina non risponde (quadro spento?)")
+                DiagCtl.fail("Il lettore è collegato ma la centralina non risponde: gira la chiave sul quadro (o avvia il motore) e riprova.")
+                return false
+            }
             Live.connected.value = true
             update("Collegato all'auto: sto registrando")
             Recorder(this, elm) { update(it) }.run()
@@ -160,14 +175,23 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
         Live.log(msg)
     }
     private val sent = HashSet<String>()
+    private val gps = GpsTracker(ctx)
+    private var car = 1L
+    private var vin: String? = null
+    private lateinit var sup: Set<Int>
     private val liveFindings = ArrayList<Finding>()
     private var lowVoltSince = 0L
 
     suspend fun run() {
-        val sup = elm.supported()
+        sup = elm.supported()
         Live.log("La centralina fornisce ${sup.size} parametri")
+        vin = try { elm.vin() } catch (e: IOException) { throw e } catch (_: Exception) { null }
+        car = resolveCar(vin)
         val start = System.currentTimeMillis()
-        val tripId = db.startTrip(start)
+        val tripId = db.startTrip(start, car)
+        val bat0 = PhoneBattery.now(ctx)
+        if (gps.start()) Live.log("GPS attivo") else Live.log("GPS non attivo (permesso posizione mancante)")
+        if (DiagCtl.requested) runDiag()
         try { acc.dtcs.addAll(elm.dtcs("03")); acc.pending.addAll(elm.dtcs("07")) } catch (e: IOException) { throw e } catch (_: Exception) {}
         elm.monitor()?.let { acc.mil = it.first }
         if (acc.dtcs.isNotEmpty() || acc.mil) alarm("dtc", "Codici errore presenti", "La centralina ha memorizzato: ${acc.dtcs.joinToString()}. Apri l'app per i dettagli.", 2, "Codici errore")
@@ -186,6 +210,7 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
 
         try {
             while (currentCoroutineContext().isActive) {
+                if (DiagCtl.requested) runDiag()
                 var got = 0
                 for (p in fast) elm.read(p)?.let { values[p.key] = it; got++ }
                 if (cycle % 8 == 0) for (p in slow) elm.read(p)?.let { values[p.key] = it; got++ }
@@ -219,15 +244,53 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
                     fun v(k: String) = values[k] ?: Double.NaN
                     buf.add(Sample(now, v("rpm"), v("speed"), v("load"), v("coolant"), v("intake"), v("maf"), v("boost"), v("rail"), v("fuel_rate"), v("volt"), v("oil")))
                     lastSample = now
-                    if (buf.size >= 30) { db.addSamples(tripId, buf); buf.clear() }
+                    if (buf.size >= 30) { db.addSamples(tripId, buf); buf.clear(); db.addPoints(tripId, gps.drain()) }
                 }
                 cycle++
             }
         } catch (e: IOException) {
             Live.log("Collegamento chiuso: ${e.message}")
         } finally {
-            finish(tripId, start, buf)
+            finish(tripId, start, buf, bat0)
         }
+    }
+
+    private suspend fun runDiag() {
+        DiagCtl.requested = false
+        status("Diagnosi in corso…")
+        try {
+            Diagnosis(ctx, elm, sup, vin, car).run()
+            App.notify(ctx, App.CH_TRIP, 80, "Diagnosi completata", "Apri AutoSalute per leggere il report.")
+        } catch (e: IOException) {
+            DiagCtl.state.value = DiagState(error = "Collegamento perso durante la diagnosi: riprova.")
+            throw e
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            DiagCtl.state.value = DiagState(error = "Diagnosi interrotta: ${e.message}")
+        }
+        lastWarmTitle = ""
+    }
+
+    /** Riconosce l'auto dal numero di telaio, così i dati di auto diverse non si mescolano. */
+    private fun resolveCar(vin: String?): Long {
+        val active = Cars.activeId(ctx)
+        if (vin == null) { Live.log("Telaio non letto: uso l'auto selezionata"); return active }
+        Live.log("Telaio: $vin")
+        db.carByVin(vin)?.let { c ->
+            if (c.id != active) {
+                Cars.select(ctx, c.id)
+                App.notify(ctx, App.CH_TRIP, 90, "Auto riconosciuta: ${c.name}", "Ho selezionato il suo profilo in automatico.")
+            }
+            return c.id
+        }
+        val act = db.car(active)
+        if (act != null && act.vin == null) { db.setCarVin(active, vin); return active }
+        val id = db.addCar("Auto ${vin.takeLast(6)}", vin)
+        Cars.select(ctx, id)
+        App.notify(ctx, App.CH_TRIP, 90, "Nuova auto rilevata",
+            "Telaio $vin: i suoi dati vanno in un profilo separato, senza mescolarsi con le altre auto. Puoi rinominarla in Imposta.")
+        return id
     }
 
     private suspend fun checkCodes() {
@@ -259,12 +322,21 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
         Live.log("Allarme: $title")
     }
 
-    private fun finish(tripId: Long, start: Long, buf: List<Sample>) {
+    private fun finish(tripId: Long, start: Long, buf: List<Sample>, bat0: PhoneBattery) {
+        val usedGps = gps.active
+        gps.stop()
         try {
             if (buf.isNotEmpty()) db.addSamples(tripId, buf)
+            db.addPoints(tripId, gps.drain())
             if (!acc.engineStarted && acc.dtcs.isEmpty()) { db.deleteTrip(tripId); Live.log("Quadro acceso senza avviare: niente viaggio"); return }
-            val metrics = acc.metrics() + eco.metrics()
-            val hist = db.trips(60).filter { it.id != tripId }.map { it.metrics }
+            val bat1 = PhoneBattery.now(ctx)
+            val mah = PhoneBattery.appMah(bat0, bat1, usedGps)
+            val batt = HashMap<String, Double>()
+            batt["app_mah"] = mah
+            batt["app_batt_pct"] = mah / PhoneBattery.capacityMah(ctx) * 100
+            if (!bat0.charging && !bat1.charging && bat0.level >= bat1.level) batt["phone_batt_drop"] = (bat0.level - bat1.level).toDouble()
+            val metrics = acc.metrics() + eco.metrics() + batt
+            val hist = db.trips(car, 60).filter { it.id != tripId }.map { it.metrics }
             val findings = (Health.evaluate(metrics, hist, acc.dtcs.toList(), acc.pending.toList(), acc.mil) +
                 liveFindings.filter { it.cat != "Codici errore" }).distinctBy { it.title }
             val score = Health.score(findings)
@@ -275,7 +347,7 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
             )
             db.prune()
             Live.tripsVersion.value++
-            try { MaintNotify.check(ctx) } catch (_: Exception) {}
+            try { MaintNotify.check(ctx, car) } catch (_: Exception) {}
             Backup.auto(ctx)
             val warn = findings.count { it.sev >= 1 }
             App.notify(

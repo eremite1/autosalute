@@ -25,7 +25,7 @@ object Backup {
     val status = MutableStateFlow(0) // cambia quando lo stato va ridisegnato
 
     /** Impostazioni che viaggiano con il backup (non il lettore, che dipende dal telefono). */
-    private val PREF_KEYS = listOf("odo_km", "odo_ts", "maint_plan", "autostart")
+    private val PREF_KEYS = listOf("maint_plan", "autostart", "active_car")
 
     private fun p(c: Context) = c.getSharedPreferences("autosalute", Context.MODE_PRIVATE)
 
@@ -50,7 +50,7 @@ object Backup {
         val j = Db.get(c).exportJson()
         val pr = JSONObject()
         val all = p(c).all
-        for (k in PREF_KEYS) when (val v = all[k]) {
+        for (k in all.keys.filter { it in PREF_KEYS || it.startsWith("odo_") }) when (val v = all[k]) {
             is Float -> pr.put(k, v.toDouble()); is Long -> pr.put(k, v); is Int -> pr.put(k, v)
             is Boolean -> pr.put(k, v); is String -> pr.put(k, v)
         }
@@ -99,16 +99,18 @@ object Backup {
             if (pr != null) {
                 val e = p(c).edit()
                 pr.keys().forEach { k ->
-                    when (k) {
-                        "odo_km" -> e.putFloat(k, pr.optDouble(k).toFloat())
-                        "odo_ts" -> e.putLong(k, pr.optLong(k))
-                        "autostart" -> e.putBoolean(k, pr.optBoolean(k, true))
+                    when {
+                        k.startsWith("odo_km") -> e.putFloat(k, pr.optDouble(k).toFloat())
+                        k.startsWith("odo_ts") || k == "active_car" -> e.putLong(k, pr.optLong(k))
+                        k == "autostart" -> e.putBoolean(k, pr.optBoolean(k, true))
                         else -> e.putString(k, pr.optString(k))
                     }
                 }
                 e.apply()
             }
             setTarget(c, uri)
+            Cars.active.value = 0L
+            Cars.activeId(c)
             Live.tripsVersion.value++
             val n = j.optJSONArray("trips")?.length() ?: 0
             val m = j.optJSONArray("maint")?.length() ?: 0
