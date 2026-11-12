@@ -47,7 +47,7 @@ class Warmup(private val onReady: (String) -> Unit) {
         if (!c.isNaN()) {
             hist.addLast(now to c)
             while (hist.size > 2 && now - hist.first().first > 120_000) hist.removeFirst()
-            if (c >= 80 && rpm > 600) hot80Since += dt.coerceIn(0.0, 5.0)
+            if (c >= 78 && rpm > 600) hot80Since += dt.coerceIn(0.0, 5.0)
         }
 
         // Pochi secondi di attesa solo a freddo: l'olio raggiunge turbo e alberi
@@ -59,8 +59,10 @@ class Warmup(private val onReady: (String) -> Unit) {
             else -> 0
         }
         val oilKnown = !oil.isNaN()
-        val ready = !c.isNaN() && c >= 80 && (
-            if (oilKnown) oil >= 75 else (!wasCold || hot80Since >= 240)
+        // Pronto: liquido ad almeno 78°C e olio ad almeno 70°C. Se l'olio fatica (inverno, andatura
+        // tranquilla) basta che il liquido sia caldo da 8 minuti: l'olio è comunque ben fluido.
+        val ready = !c.isNaN() && c >= 78 && (
+            !wasCold || (oilKnown && oil >= 70) || hot80Since >= (if (oilKnown) 480 else 240)
         )
 
         val st: WarmState = when {
@@ -76,7 +78,7 @@ class Warmup(private val onReady: (String) -> Unit) {
             c.isNaN() -> WarmState(phase = 1, title = "Parti con calma", detail = "Temperatura non disponibile: guida dolce i primi 10 minuti.", maxRpm = 2300)
             c < 50 -> WarmState(phase = 1, title = "Motore freddo: guida dolce", detail = "Accelera piano e resta sotto i 2000 giri. Niente pedale a fondo.", maxRpm = 2000)
             c < 70 -> WarmState(phase = 1, title = "Si sta scaldando", detail = "Accelerazioni dolci, sotto i 2300 giri.", maxRpm = 2300)
-            c < 80 -> WarmState(phase = 2, title = "Quasi pronto", detail = "Puoi salire fino a 2800 giri, ancora senza tirare le marce.", maxRpm = 2800)
+            c < 78 -> WarmState(phase = 2, title = "Quasi pronto", detail = "Puoi salire fino a 2800 giri, ancora senza tirare le marce.", maxRpm = 2800)
             else -> WarmState(phase = 2, title = "Quasi pronto", detail = "Il liquido è caldo, l'olio ci mette qualche minuto in più. Fino a 3000 giri.", maxRpm = 3000)
         }
 

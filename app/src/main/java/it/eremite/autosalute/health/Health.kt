@@ -66,7 +66,7 @@ object Health {
         Metric("coolant_max", Cat.RAFF, "Temperatura massima motore", "°C", 1, 3.0, "il motore arriva più caldo del solito"),
         Metric("volt_rest", Cat.ELETTR, "Batteria a motore spento", "V", -1, 0.08, "la batteria a riposo è più scarica"),
         Metric("crank_min", Cat.ELETTR, "Batteria durante l'avviamento", "V", -1, 0.25, "la batteria cede di più quando avvii (batteria che invecchia)"),
-        Metric("volt_run", Cat.ELETTR, "Tensione di ricarica", "V", 0, 0.12, "l'alternatore carica in modo diverso"),
+        Metric("volt_run", Cat.ELETTR, "Tensione di ricarica", "V", 0, 0.45, "l'alternatore carica in modo diverso"),
         Metric("cons", Cat.CONSUMI, "Consumo medio", "L/100km", 1, 0.3, "consuma di più (gomme, filtri, iniettori, stile di guida)"),
     )
     private val byKey = METRICS.associateBy { it.key }
@@ -104,7 +104,10 @@ object Health {
             if (it < 8.5) f += Finding(Cat.ELETTR, 2, "Batteria cede all'avviamento (${fmt(it)} V)", "Durante l'avviamento la tensione scende troppo: batteria a fine vita.")
             else if (it < 9.6) f += Finding(Cat.ELETTR, 1, "Avviamento faticoso (${fmt(it)} V)", "La batteria cede parecchio quando avvii. In inverno peggiora.")
         }
-        g("volt_run_min")?.let { if (it < 12.9 && (g("volt_run") ?: 14.0) < 13.4) f += Finding(Cat.ELETTR, 1, "Ricarica bassa (${fmt(it)} V)", "Col motore acceso la tensione è bassa: alternatore o cinghia da controllare.") }
+        g("volt_run_max")?.let { mx ->
+            if (mx < 13.1 && dur > 900) f += Finding(Cat.ELETTR, 2, "L'alternatore non ha mai caricato (max ${fmt(mx)} V)",
+                "In tutto il viaggio la tensione non ha mai superato 13 V: alternatore o cinghia da controllare.")
+        }
         g("volt_run_max")?.let { if (it > 15.0) f += Finding(Cat.ELETTR, 1, "Tensione troppo alta (${fmt(it)} V)", "Il regolatore dell'alternatore potrebbe essere difettoso.") }
 
         // --- Confronto con la storia della TUA auto ---

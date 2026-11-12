@@ -29,6 +29,7 @@ import it.eremite.autosalute.data.Sample
 import it.eremite.autosalute.data.Trip
 import it.eremite.autosalute.health.Finding
 import it.eremite.autosalute.health.Health
+import it.eremite.autosalute.health.Dtc
 import it.eremite.autosalute.health.TripAcc
 import it.eremite.autosalute.health.Eco
 import it.eremite.autosalute.health.EcoAcc
@@ -181,6 +182,7 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
     private lateinit var sup: Set<Int>
     private val liveFindings = ArrayList<Finding>()
     private var lowVoltSince = 0L
+    private var lastCharge = System.currentTimeMillis()
 
     suspend fun run() {
         sup = elm.supported()
@@ -194,7 +196,9 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
         if (DiagCtl.requested) runDiag()
         try { acc.dtcs.addAll(elm.dtcs("03")); acc.pending.addAll(elm.dtcs("07")) } catch (e: IOException) { throw e } catch (_: Exception) {}
         elm.monitor()?.let { acc.mil = it.first }
-        if (acc.dtcs.isNotEmpty() || acc.mil) alarm("dtc", "Codici errore presenti", "La centralina ha memorizzato: ${acc.dtcs.joinToString()}. Apri l'app per i dettagli.", 2, "Codici errore")
+        if (acc.dtcs.isNotEmpty() || acc.mil) alarm("dtc", "Codice errore: ${acc.dtcs.joinToString()}",
+            acc.dtcs.joinToString("\n") { c -> "$c: " + Dtc.describe(c) } +
+                (if (acc.mil) "\nSpia motore accesa." else "\nSpia motore spenta: guasto memorizzato, non per forza attuale."), 2, "Codici errore")
         else if (acc.pending.isNotEmpty()) alarm("pend", "Problema in sospeso", "Codici in sospeso: ${acc.pending.joinToString()}. Potrebbe essere l'inizio di un guasto.", 1, "Codici errore")
 
         val fuelPid = 0x5E in sup
@@ -297,7 +301,7 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
         val d = elm.dtcs("03"); val p = elm.dtcs("07")
         val newD = d.filter { it !in acc.dtcs }; val newP = p.filter { it !in acc.pending }
         acc.dtcs.addAll(d); acc.pending.addAll(p)
-        if (newD.isNotEmpty()) alarm("dtc_" + newD.joinToString(), "Nuovo codice errore", "Durante la guida: ${newD.joinToString()}", 2, "Codici errore")
+        if (newD.isNotEmpty()) alarm("dtc_" + newD.joinToString(), "Nuovo codice errore", newD.joinToString("\n") { "$it: " + Dtc.describe(it) }, 2, "Codici errore")
         if (newP.isNotEmpty()) alarm("pend_" + newP.joinToString(), "Nuovo problema in sospeso", newP.joinToString(), 1, "Codici errore")
         elm.monitor()?.let { if (it.first && !acc.mil) { acc.mil = true; alarm("mil", "Spia motore accesa", "La centralina ha acceso la spia motore.", 2, "Codici errore") } }
     }
@@ -307,8 +311,11 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
         if (c != null && c >= 108) alarm("hot", "Motore troppo caldo: ${c.toInt()}°C", "Accosta appena puoi e lascia il motore al minimo. Controlla il liquido di raffreddamento a motore freddo.", 2, "Raffreddamento")
         v["oil"]?.let { if (it >= 132) alarm("oil", "Olio molto caldo: ${it.toInt()}°C", "Riduci l'andatura.", 1, "Motore") }
         if (volt != null && rpm > 800) {
-            if (volt < 12.6) { if (lowVoltSince == 0L) lowVoltSince = now } else lowVoltSince = 0L
-            if (lowVoltSince > 0 && now - lowVoltSince > 40_000)
+            // Alternatore "intelligente": a batteria carica può stare a 12,4-12,8 V e ricarica in rilascio.
+            // È un guasto solo se la tensione resta bassa a lungo e non sale mai oltre 13 V.
+            if (volt >= 13.0) lastCharge = now
+            if (volt < 12.2) { if (lowVoltSince == 0L) lowVoltSince = now } else lowVoltSince = 0L
+            if (lowVoltSince > 0 && now - lowVoltSince > 120_000 && now - lastCharge > 600_000)
                 alarm("alt", "Alternatore non carica (${"%.1f".format(volt)} V)", "La batteria si sta scaricando con motore acceso: controlla alternatore e cinghia.", 2, "Batteria e alternatore")
             if (volt > 15.3) alarm("over", "Tensione troppo alta (${"%.1f".format(volt)} V)", "Possibile guasto del regolatore dell'alternatore.", 1, "Batteria e alternatore")
         }
