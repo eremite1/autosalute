@@ -27,6 +27,9 @@ val PIDS = listOf(
     Pid(0x2D, "egr_err", "Errore EGR", "%", 1) { it[0] * 100.0 / 128 - 100 },
     Pid(0x1F, "runtime", "Tempo da avvio", "s", 2) { (it[0] * 256 + it[1]).toDouble() },
     Pid(0x31, "dist_clear", "Km da cancellazione codici", "km", 2) { (it[0] * 256 + it[1]).toDouble() },
+    Pid(0x7A, "dpf_dp", "Contropressione FAP", "kPa", 3) { (it[1] * 256 + it[2]) / 100.0 },
+    Pid(0x7C, "dpf_temp", "Temperatura FAP", "°C", 3) { (it[1] * 256 + it[2]) / 10.0 - 40 },
+    Pid(0x78, "egt", "Temperatura gas di scarico", "°C", 3) { (it[1] * 256 + it[2]) / 10.0 - 40 },
     Pid(0x21, "dist_mil", "Km con spia accesa", "km", 2) { (it[0] * 256 + it[1]).toDouble() },
 )
 

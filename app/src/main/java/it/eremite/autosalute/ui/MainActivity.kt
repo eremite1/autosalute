@@ -174,6 +174,11 @@ class MainActivity : ComponentActivity() {
 fun Root(act: MainActivity) {
     var tab by remember { mutableIntStateOf(0) }
     var diag by remember { mutableStateOf(false) }
+    var fap by remember { mutableStateOf(false) }
+    if (fap) {
+        Scaffold(containerColor = C.bg) { pad -> Box(Modifier.padding(pad).fillMaxSize()) { FapScreen { fap = false } } }
+        return
+    }
     if (diag) {
         Scaffold(containerColor = C.bg) { pad -> Box(Modifier.padding(pad).fillMaxSize()) { DiagScreen { diag = false } } }
         return
@@ -197,7 +202,7 @@ fun Root(act: MainActivity) {
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             when (tab) {
-                0 -> HomeScreen(act, goMaint = { tab = 4 }, openDiag = { diag = true }) { tab = 5 }
+                0 -> HomeScreen(act, goMaint = { tab = 4 }, openDiag = { diag = true }, openFap = { fap = true }) { tab = 5 }
                 1 -> EcoScreen()
                 2 -> TripsScreen()
                 3 -> TrendsScreen()

@@ -26,7 +26,7 @@ object Dtc {
         "P0299" to "turbo: pressione troppo bassa",
         "P0335" to "sensore giri motore",
         "P0340" to "sensore fase (albero a camme)",
-        "P0380" to "candelette di preriscaldo",
+        "P0380" to "circuito candelette di preriscaldo: una candeletta guasta o la centralina che le comanda (avviamento a freddo più faticoso)",
         "P0381" to "spia candelette",
         "P0400" to "valvola EGR",
         "P0401" to "EGR: flusso insufficiente",

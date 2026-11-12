@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import it.eremite.autosalute.Live
 import it.eremite.autosalute.health.Eco
+import it.eremite.autosalute.health.FapAcc
 import it.eremite.autosalute.service.GpsTracker
 
 private const val RPM_MIN = 700.0
@@ -44,6 +45,7 @@ fun EcoScreen() {
         }
 
         WarmCard()
+        FapBanner()
 
         // Consiglio grande, leggibile con un'occhiata
         Box(
@@ -236,4 +238,16 @@ private fun LiveMap() {
     Section("Posizione dal vivo")
     RouteMap(track, Modifier.fillMaxWidth().height(220.dp), follow = true, endLabel = "Sei qui")
     if (!cur.speed.isNaN()) Text("Velocità GPS: ${cur.speed.toInt()} km/h", color = C.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+}
+
+
+@Composable
+private fun FapBanner() {
+    val f by FapAcc.live.collectAsState()
+    if (!f.regen) return
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(18.dp)).background(C.warn.copy(alpha = 0.16f)).padding(16.dp)) {
+        Text("Pulizia del FAP in corso", color = C.warn, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text("Da ${((System.currentTimeMillis() - f.since) / 60000).toInt()} min. Se puoi non spegnere il motore e tieni un'andatura costante per 10-15 minuti." +
+            (if (!f.dpfTemp.isNaN()) " Scarico a ${f.dpfTemp.toInt()}°C." else ""), color = C.text, fontSize = 14.sp)
+    }
 }

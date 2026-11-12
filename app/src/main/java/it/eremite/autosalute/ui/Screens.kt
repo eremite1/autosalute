@@ -74,7 +74,7 @@ fun ConnChip() {
 
 // ------------------------------------------------------------------ SALUTE
 @Composable
-fun HomeScreen(act: MainActivity, goMaint: () -> Unit, openDiag: () -> Unit, goSetup: () -> Unit) {
+fun HomeScreen(act: MainActivity, goMaint: () -> Unit, openDiag: () -> Unit, openFap: () -> Unit, goSetup: () -> Unit) {
     val trips = rememberTrips()
     val live by Live.alerts.collectAsState()
     val conn by Live.connected.collectAsState()
@@ -101,6 +101,7 @@ fun HomeScreen(act: MainActivity, goMaint: () -> Unit, openDiag: () -> Unit, goS
         }
         UpdateBox(always = false)
         MaintAlert(goMaint)
+        FapCard(openFap)
         Box(Modifier.fillMaxWidth().padding(top = 12.dp), contentAlignment = Alignment.Center) { ScoreRing(score, label) }
 
         if (Prefs.mac(act) == null) {

@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import it.eremite.autosalute.health.Finding
+import it.eremite.autosalute.health.RegenEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
@@ -48,7 +49,7 @@ object Cars {
     }
 }
 
-class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.db", null, 3) {
+class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.db", null, 4) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -63,6 +64,31 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.d
         db.execSQL("CREATE INDEX s_trip ON samples(trip)")
         createMaint(db)
         migrate3(db)
+        migrate4(db)
+    }
+
+    private fun migrate4(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS regen(id INTEGER PRIMARY KEY AUTOINCREMENT, car INTEGER, start INTEGER, ende INTEGER,
+            dur REAL, km_start REAL, km_during REAL, method TEXT, interrupted INTEGER, max_temp REAL)"""
+        )
+    }
+
+    fun addRegen(car: Long, e: RegenEvent) {
+        writableDatabase.insert("regen", null, ContentValues().apply {
+            put("car", car); put("start", e.start); put("ende", e.end); put("dur", e.durS); put("km_start", e.kmStart)
+            put("km_during", e.kmDuring); put("method", e.method); put("interrupted", if (e.interrupted) 1 else 0); pn("max_temp", e.maxTemp)
+        })
+    }
+
+    fun regens(car: Long): List<RegenEvent> {
+        val out = ArrayList<RegenEvent>()
+        readableDatabase.rawQuery("SELECT start, ende, dur, km_start, km_during, method, interrupted, max_temp FROM regen WHERE car=? ORDER BY start DESC",
+            arrayOf(car.toString())).use { c ->
+            while (c.moveToNext()) out.add(RegenEvent(c.getLong(0), c.getLong(1), c.getDouble(2), c.getDouble(3),
+                c.getDouble(4), c.getString(5) ?: "", c.getInt(6) == 1, if (c.isNull(7)) Double.NaN else c.getDouble(7)))
+        }
+        return out
     }
 
     private fun createMaint(db: SQLiteDatabase) {
@@ -85,6 +111,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.d
     override fun onUpgrade(db: SQLiteDatabase, o: Int, n: Int) {
         if (o < 2) createMaint(db)
         if (o < 3) migrate3(db)
+        if (o < 4) migrate4(db)
     }
 
     // ---------------------------------------------------------------- auto
@@ -215,6 +242,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.d
             .put("trips", all("SELECT * FROM trips WHERE ende IS NOT NULL", false))
             .put("maint", all("SELECT * FROM maint", false))
             .put("diag", all("SELECT * FROM diag", false))
+            .put("regen", all("SELECT * FROM regen", false))
     }
 
     private fun rowJson(c: android.database.Cursor, keepId: Boolean): JSONObject {
@@ -237,7 +265,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.d
         val db = writableDatabase
         db.beginTransaction()
         try {
-            for (t in listOf("samples", "points", "trips", "maint", "diag")) db.delete(t, null, null)
+            for (t in listOf("samples", "points", "trips", "maint", "diag", "regen")) db.delete(t, null, null)
             if (j.has("cars")) db.delete("cars", null, null)
             fun ins(table: String, arr: JSONArray?) {
                 if (arr == null) return
@@ -255,7 +283,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.d
                 }
             }
             ins("cars", j.optJSONArray("cars")); ins("trips", j.optJSONArray("trips"))
-            ins("maint", j.optJSONArray("maint")); ins("diag", j.optJSONArray("diag"))
+            ins("maint", j.optJSONArray("maint")); ins("diag", j.optJSONArray("diag")); ins("regen", j.optJSONArray("regen"))
             db.execSQL("INSERT OR IGNORE INTO cars(id, name, vin, created) VALUES(1, 'Dacia Sandero Stepway', NULL, ${System.currentTimeMillis()})")
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }

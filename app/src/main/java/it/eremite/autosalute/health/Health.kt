@@ -67,6 +67,7 @@ object Health {
         Metric("volt_rest", Cat.ELETTR, "Batteria a motore spento", "V", -1, 0.08, "la batteria a riposo è più scarica"),
         Metric("crank_min", Cat.ELETTR, "Batteria durante l'avviamento", "V", -1, 0.25, "la batteria cede di più quando avvii (batteria che invecchia)"),
         Metric("volt_run", Cat.ELETTR, "Tensione di ricarica", "V", 0, 0.45, "l'alternatore carica in modo diverso"),
+        Metric("dpf_restr", Cat.MOTORE, "Contropressione del FAP", "", 1, 0.5, "il filtro antiparticolato oppone più resistenza (fuliggine o cenere)"),
         Metric("cons", Cat.CONSUMI, "Consumo medio", "L/100km", 1, 0.3, "consuma di più (gomme, filtri, iniettori, stile di guida)"),
     )
     private val byKey = METRICS.associateBy { it.key }

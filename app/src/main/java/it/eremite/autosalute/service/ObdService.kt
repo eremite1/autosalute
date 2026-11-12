@@ -30,6 +30,7 @@ import it.eremite.autosalute.data.Trip
 import it.eremite.autosalute.health.Finding
 import it.eremite.autosalute.health.Health
 import it.eremite.autosalute.health.Dtc
+import it.eremite.autosalute.health.FapAcc
 import it.eremite.autosalute.health.TripAcc
 import it.eremite.autosalute.health.Eco
 import it.eremite.autosalute.health.EcoAcc
@@ -177,6 +178,7 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
     }
     private val sent = HashSet<String>()
     private val gps = GpsTracker(ctx)
+    private var fap: FapAcc? = null
     private var car = 1L
     private var vin: String? = null
     private lateinit var sup: Set<Int>
@@ -192,6 +194,11 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
         val start = System.currentTimeMillis()
         val tripId = db.startTrip(start, car)
         val bat0 = PhoneBattery.now(ctx)
+        fap = FapAcc(ctx, car) {
+            App.notify(ctx, App.CH_ALARM, 95, "Rigenerazione FAP in corso",
+                "Il filtro antiparticolato si sta pulendo. Se puoi, non spegnere il motore per 10-15 minuti e mantieni un'andatura costante.")
+            Live.log("Rigenerazione FAP iniziata")
+        }
         if (gps.start()) Live.log("GPS attivo") else Live.log("GPS non attivo (permesso posizione mancante)")
         if (DiagCtl.requested) runDiag()
         try { acc.dtcs.addAll(elm.dtcs("03")); acc.pending.addAll(elm.dtcs("07")) } catch (e: IOException) { throw e } catch (_: Exception) {}
@@ -231,7 +238,7 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
                 val now = System.currentTimeMillis()
                 val dt = (now - lastT) / 1000.0
                 acc.add(values, dt, now)
-                if (acc.engineStarted) eco.add(values, dt, !fuelPid)
+                if (acc.engineStarted) { eco.add(values, dt, !fuelPid); fap?.add(values, now, acc.km) }
                 warm.add(values, now, dt, acc.engineStarted)
                 Warmup.live.value.let { w ->
                     val t = when (w.phase) {
@@ -342,7 +349,13 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
             batt["app_mah"] = mah
             batt["app_batt_pct"] = mah / PhoneBattery.capacityMah(ctx) * 100
             if (!bat0.charging && !bat1.charging && bat0.level >= bat1.level) batt["phone_batt_drop"] = (bat0.level - bat1.level).toDouble()
-            val metrics = acc.metrics() + eco.metrics() + batt
+            fap?.let { f ->
+                f.finish(System.currentTimeMillis(), acc.km)
+                f.events.forEach { e -> db.addRegen(car, e) }
+                if (f.events.any { it.interrupted }) App.notify(ctx, App.CH_TRIP, 96, "Rigenerazione FAP interrotta",
+                    "Hai spento il motore mentre il filtro si stava pulendo. Ogni tanto succede; se capita spesso fai un tratto di 20 minuti a velocità costante.")
+            }
+            val metrics = acc.metrics() + eco.metrics() + batt + (fap?.metrics() ?: emptyMap())
             val hist = db.trips(car, 60).filter { it.id != tripId }.map { it.metrics }
             val findings = (Health.evaluate(metrics, hist, acc.dtcs.toList(), acc.pending.toList(), acc.mil) +
                 liveFindings.filter { it.cat != "Codici errore" }).distinctBy { it.title }
