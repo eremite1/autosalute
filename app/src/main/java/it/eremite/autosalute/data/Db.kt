@@ -49,7 +49,7 @@ object Cars {
     }
 }
 
-class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.db", null, 4) {
+class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.db", null, 5) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -65,7 +65,19 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.d
         createMaint(db)
         migrate3(db)
         migrate4(db)
+        migrate5(db)
     }
+
+    private fun migrate5(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE regen ADD COLUMN type TEXT")
+        db.execSQL("ALTER TABLE regen ADD COLUMN soot0 REAL")
+        db.execSQL("ALTER TABLE regen ADD COLUMN soot1 REAL")
+        db.execSQL("ALTER TABLE cars ADD COLUMN fp TEXT")
+    }
+
+    fun setCarFp(id: Long, fp: String?) { writableDatabase.update("cars", ContentValues().apply { if (fp == null) putNull("fp") else put("fp", fp) }, "id=?", arrayOf(id.toString())) }
+    fun carFp(id: Long): String? = readableDatabase.rawQuery("SELECT fp FROM cars WHERE id=?", arrayOf(id.toString())).use { if (it.moveToFirst() && !it.isNull(0)) it.getString(0) else null }
+    fun carByFp(fp: String): Car? = readableDatabase.rawQuery("SELECT id FROM cars WHERE fp=? LIMIT 1", arrayOf(fp)).use { if (it.moveToFirst()) car(it.getLong(0)) else null }
 
     private fun migrate4(db: SQLiteDatabase) {
         db.execSQL(
@@ -78,15 +90,17 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.d
         writableDatabase.insert("regen", null, ContentValues().apply {
             put("car", car); put("start", e.start); put("ende", e.end); put("dur", e.durS); put("km_start", e.kmStart)
             put("km_during", e.kmDuring); put("method", e.method); put("interrupted", if (e.interrupted) 1 else 0); pn("max_temp", e.maxTemp)
+            put("type", e.type); pn("soot0", e.soot0); pn("soot1", e.soot1)
         })
     }
 
     fun regens(car: Long): List<RegenEvent> {
         val out = ArrayList<RegenEvent>()
-        readableDatabase.rawQuery("SELECT start, ende, dur, km_start, km_during, method, interrupted, max_temp FROM regen WHERE car=? ORDER BY start DESC",
+        readableDatabase.rawQuery("SELECT start, ende, dur, km_start, km_during, method, interrupted, max_temp, type, soot0, soot1 FROM regen WHERE car=? ORDER BY start DESC",
             arrayOf(car.toString())).use { c ->
             while (c.moveToNext()) out.add(RegenEvent(c.getLong(0), c.getLong(1), c.getDouble(2), c.getDouble(3),
-                c.getDouble(4), c.getString(5) ?: "", c.getInt(6) == 1, if (c.isNull(7)) Double.NaN else c.getDouble(7)))
+                c.getDouble(4), c.getString(5) ?: "", c.getInt(6) == 1, if (c.isNull(7)) Double.NaN else c.getDouble(7),
+                c.getString(8) ?: "attiva", if (c.isNull(9)) Double.NaN else c.getDouble(9), if (c.isNull(10)) Double.NaN else c.getDouble(10)))
         }
         return out
     }
@@ -112,6 +126,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.d
         if (o < 2) createMaint(db)
         if (o < 3) migrate3(db)
         if (o < 4) migrate4(db)
+        if (o < 5) migrate5(db)
     }
 
     // ---------------------------------------------------------------- auto

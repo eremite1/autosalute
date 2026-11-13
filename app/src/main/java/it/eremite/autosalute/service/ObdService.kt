@@ -24,6 +24,7 @@ import it.eremite.autosalute.Updater
 import it.eremite.autosalute.data.Db
 import it.eremite.autosalute.data.Backup
 import it.eremite.autosalute.data.Cars
+import it.eremite.autosalute.data.Maint
 import it.eremite.autosalute.data.MaintNotify
 import it.eremite.autosalute.data.Sample
 import it.eremite.autosalute.data.Trip
@@ -179,6 +180,8 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
     private val sent = HashSet<String>()
     private val gps = GpsTracker(ctx)
     private var fap: FapAcc? = null
+    private lateinit var ext: RenaultExt
+    private var odoSet = false
     private var car = 1L
     private var vin: String? = null
     private lateinit var sup: Set<Int>
@@ -190,7 +193,15 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
         sup = elm.supported()
         Live.log("La centralina fornisce ${sup.size} parametri")
         vin = try { elm.vin() } catch (e: IOException) { throw e } catch (_: Exception) { null }
-        car = resolveCar(vin)
+        val proto = elm.protocol()
+        // impronta della centralina: serve a riconoscere le auto che non comunicano il telaio
+        val fp = if (vin != null) null else {
+            val calib = try { elm.info09(0x04) } catch (e: IOException) { throw e } catch (_: Exception) { null }
+            proto + "|" + sup.sorted().joinToString(",").hashCode().toString(16) + "|" + (calib ?: "")
+        }
+        car = resolveCar(vin, fp)
+        ext = RenaultExt(elm)
+        ext.probe(proto, vin)
         val start = System.currentTimeMillis()
         val tripId = db.startTrip(start, car)
         val bat0 = PhoneBattery.now(ctx)
@@ -226,6 +237,13 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
                 for (p in fast) elm.read(p)?.let { values[p.key] = it; got++ }
                 if (cycle % 8 == 0) for (p in slow) elm.read(p)?.let { values[p.key] = it; got++ }
                 if (cycle % 4 == 0 || !acc.engineStarted) elm.voltage()?.let { values["volt"] = it; got++ }
+                if (ext.available) {
+                    if (cycle % 4 == 1) ext.readFap(values)
+                    if (cycle % 60 == 2) {
+                        ext.readSlow(values)
+                        values["odo_ecu"]?.let { o -> if (!odoSet && o > 1000) { odoSet = true; Maint.setOdometer(ctx, o, System.currentTimeMillis(), car) } }
+                    }
+                }
                 if (cycle > 0 && cycle % 500 == 0) checkCodes()
                 if (got == 0) { fails++; if (fails >= 4) { Live.log("La centralina non risponde più"); break }; delay(700); continue }
                 fails = 0
@@ -270,7 +288,7 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
         DiagCtl.requested = false
         status("Diagnosi in corso…")
         try {
-            Diagnosis(ctx, elm, sup, vin, car).run()
+            Diagnosis(ctx, elm, sup, vin, car, ext).run()
             App.notify(ctx, App.CH_TRIP, 80, "Diagnosi completata", "Apri AutoSalute per leggere il report.")
         } catch (e: IOException) {
             DiagCtl.state.value = DiagState(error = "Collegamento perso durante la diagnosi: riprova.")
@@ -284,9 +302,27 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
     }
 
     /** Riconosce l'auto dal numero di telaio, così i dati di auto diverse non si mescolano. */
-    private fun resolveCar(vin: String?): Long {
+    private fun resolveCar(vin: String?, fp: String?): Long {
         val active = Cars.activeId(ctx)
-        if (vin == null) { Live.log("Telaio non letto: uso l'auto selezionata"); return active }
+        if (vin == null) {
+            if (fp == null) return active
+            Live.log("Telaio non disponibile: riconosco l'auto dalla centralina")
+            db.carByFp(fp)?.let { c ->
+                if (c.id != active) {
+                    Cars.select(ctx, c.id)
+                    App.notify(ctx, App.CH_TRIP, 90, "Auto riconosciuta: ${c.name}", "Ho selezionato il suo profilo in automatico.")
+                }
+                return c.id
+            }
+            val act = db.car(active)
+            if (act != null && act.vin == null && db.carFp(active) == null) { db.setCarFp(active, fp); return active }
+            val id = db.addCar("Auto nuova " + java.text.SimpleDateFormat("d MMM", java.util.Locale.ITALY).format(java.util.Date()), null)
+            db.setCarFp(id, fp)
+            Cars.select(ctx, id)
+            App.notify(ctx, App.CH_TRIP, 90, "Nuova auto rilevata",
+                "Questa centralina è diversa da quella delle tue auto: i dati vanno in un profilo separato. Puoi rinominarlo in Imposta.")
+            return id
+        }
         Live.log("Telaio: $vin")
         db.carByVin(vin)?.let { c ->
             if (c.id != active) {

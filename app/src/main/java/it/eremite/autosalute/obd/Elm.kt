@@ -39,7 +39,23 @@ val FAST = setOf(0x0C, 0x0D, 0x04, 0x10, 0x0B, 0x23, 0x49, 0x5E, 0x11)
 val LABELS: Map<String, Pair<String, String>> =
     PIDS.associate { it.key to (it.label to it.unit) } + mapOf(
         "volt" to ("Batteria" to "V"),
-        "boost" to ("Pressione turbo" to "bar")
+        "boost" to ("Pressione turbo" to "bar"),
+        "soot_g" to ("Fuliggine nel FAP" to "g"),
+        "km_regen" to ("Km dall'ultima rigenerazione" to "km"),
+        "regen_cmd" to ("Comando rigenerazione" to ""),
+        "dpf_set_temp" to ("Temperatura FAP richiesta" to "°C"),
+        "dpf_in_temp" to ("Temperatura ingresso FAP" to "°C"),
+        "dpf_dp_mbar" to ("Pressione differenziale FAP" to "mbar"),
+        "soot_after" to ("Fuliggine dopo ultima rigenerazione" to "g"),
+        "regen_count" to ("Contatore rigenerazioni" to ""),
+        "regen_fail" to ("Rigenerazioni fallite" to ""),
+        "regen_last_min" to ("Durata ultima rigenerazione" to "min"),
+        "regen_hours" to ("Ore dall'ultima rigenerazione" to "h"),
+        "regen_static" to ("Rigenerazione statica" to ""),
+        "km_dpf" to ("Km del filtro FAP" to "km"),
+        "odo_ecu" to ("Contachilometri" to "km"),
+        "oil_dilution" to ("Diluizione olio" to "%"),
+        "glow_cmd" to ("Comando candelette" to "%")
     )
 
 /** Dialogo con il chip ELM327. */

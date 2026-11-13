@@ -46,10 +46,12 @@ object DiagGroups {
     const val BATTERY = "Batteria e ricarica"
     const val ENGINE = "Motore al minimo"
     const val MIX = "Aria, carburante e scarico"
-    val ORDER = listOf(CODES, BATTERY, ENGINE, MIX, READY, HISTORY, ID)
+    const val FAP = "Filtro antiparticolato (FAP)"
+    val ORDER = listOf(CODES, BATTERY, ENGINE, FAP, MIX, READY, HISTORY, ID)
 }
 
-class Diagnosis(private val ctx: Context, private val elm: Elm, private val sup: Set<Int>, private val vin: String?, private val car: Long) {
+class Diagnosis(private val ctx: Context, private val elm: Elm, private val sup: Set<Int>, private val vin: String?, private val car: Long,
+                private val ext: RenaultExt? = null) {
     private val items = ArrayList<DiagItem>()
     private val values = JSONObject()
     private var diesel = false
@@ -283,6 +285,44 @@ class Diagnosis(private val ctx: Context, private val elm: Elm, private val sup:
             }
         }
 
+        // FAP (dati Renault)
+        if (ext != null && ext.available) {
+            step("Leggo lo stato del filtro antiparticolato", 0.95f)
+            val f = HashMap<String, Double>()
+            ext.readFap(f); ext.readSlow(f)
+            f["soot_g"]?.let { g ->
+                values.put("soot_g", g)
+                add(when {
+                    g >= 45 -> DiagItem(DiagGroups.FAP, 2, "FAP molto intasato (${f1(g)} g di fuliggine)",
+                        "Oltre questa soglia la centralina può non riuscire più a pulirlo da sola.", "Rigenerazione forzata in officina, il prima possibile.")
+                    g >= 32 -> DiagItem(DiagGroups.FAP, 1, "FAP carico (${f1(g)} g di fuliggine)",
+                        "Sopra il livello a cui di solito parte la pulizia.", "Fai 20-30 minuti di extraurbano o autostrada a velocità costante.")
+                    g >= 18 -> DiagItem(DiagGroups.FAP, 0, "FAP a metà (${f1(g)} g di fuliggine)", "La prossima pulizia automatica arriverà presto.")
+                    else -> DiagItem(DiagGroups.FAP, 0, "FAP pulito (${f1(g)} g di fuliggine)", "")
+                })
+            }
+            val kmR = f["km_regen"]; val fail = f["regen_fail"]; val cnt = f["regen_count"]
+            add(DiagItem(DiagGroups.FAP, -1, "Storia delle pulizie",
+                listOfNotNull(kmR?.let { "Ultima rigenerazione riuscita: ${it.toInt()} km fa" },
+                    f["regen_last_min"]?.let { "durata ${it.toInt()} minuti" },
+                    cnt?.let { "contatore rigenerazioni: ${it.toInt()}" },
+                    f["km_dpf"]?.let { "km del filtro: ${it.toInt()}" }).joinToString(" · ").ifEmpty { "Non disponibile" }))
+            fail?.let {
+                if (it >= 3) add(DiagItem(DiagGroups.FAP, 1, "Rigenerazioni fallite: ${it.toInt()}",
+                    "La centralina ha provato a pulire il filtro senza riuscirci: di solito per viaggi troppo brevi.",
+                    "Fai un tratto lungo a velocità costante; se aumentano ancora, fai controllare."))
+            }
+            f["oil_dilution"]?.let { d ->
+                if (d in 0.0..30.0) {
+                    values.put("oil_dilution", d)
+                    add(if (d >= 5) DiagItem(DiagGroups.FAP, 1, "Olio diluito dal gasolio (${f1(d)}%)",
+                        "Le rigenerazioni interrotte lasciano gasolio nell'olio: l'olio lubrifica meno.", "Valuta di anticipare il cambio olio.")
+                    else DiagItem(DiagGroups.FAP, 0, "Diluizione dell'olio contenuta (${f1(d)}%)", ""))
+                }
+            }
+            f["odo_ecu"]?.let { values.put("odometer", it) }
+        }
+
         // Riepilogo
         step("Preparo il report", 0.97f)
         val score = score(items)
@@ -315,6 +355,7 @@ class Diagnosis(private val ctx: Context, private val elm: Elm, private val sup:
     }
 
     private fun f2(v: Double) = "%.1f".format(Locale.ITALY, v)
+    private fun f1(v: Double) = "%.1f".format(Locale.ITALY, v)
     private fun sgn(v: Double) = (if (v > 0) "+" else "") + "%.0f".format(v)
 
     companion object {

@@ -24,11 +24,16 @@ data class FapLive(
     val restriction: Double = Double.NaN,
     val dpfTemp: Double = Double.NaN,
     val dp: Double = Double.NaN,
+    val ecu: Boolean = false,
+    val soot: Double = Double.NaN,
+    val kmRegen: Double = Double.NaN,
+    val type: String = "",
 )
 
 class RegenEvent(
     val start: Long, val end: Long, val durS: Double, val kmStart: Double, val kmDuring: Double,
     val method: String, val interrupted: Boolean, val maxTemp: Double,
+    val type: String = "attiva", val soot0: Double = Double.NaN, val soot1: Double = Double.NaN,
 )
 
 class FapAcc(private val ctx: Context, private val car: Long, private val onStart: () -> Unit) {
@@ -47,6 +52,96 @@ class FapAcc(private val ctx: Context, private val car: Long, private val onStar
     val events = ArrayList<RegenEvent>()
     private val restr = Stat()
 
+    // ---- dati veri della centralina Renault ----
+    private var ecuMode = false
+    private var ecuActiveOffSince = 0L
+    private var ecuType = "attiva"
+    private var soot0 = Double.NaN
+    private var kmRegen0 = Double.NaN
+    private var regenTripKm0 = 0.0
+    private var cnt0 = Double.NaN
+    private var sootTripStart = Double.NaN
+    private var sootLast = Double.NaN
+    private var sootMax = Double.NaN
+    private var passiveStart = 0L
+    private var passiveKm0 = 0.0
+    private var countChecked = false
+    private var lastCount = Double.NaN
+    private var lastKmRegen = Double.NaN
+    private var oilDil = Double.NaN
+
+    /** Usa i valori della centralina Renault. Restituisce false se non disponibili. */
+    private fun addEcu(v: Map<String, Double>, now: Long, km: Double): Boolean {
+        val soot = v["soot_g"]; val cmd = v["regen_cmd"]; val set = v["dpf_set_temp"]
+        if (soot == null && cmd == null) return false
+        ecuMode = true
+        val temp = v["dpf_in_temp"] ?: Double.NaN
+        val kmReg = v["km_regen"] ?: Double.NaN
+        val cnt = v["regen_count"]
+        v["oil_dilution"]?.let { oilDil = it }
+        if (soot != null) {
+            if (sootTripStart.isNaN()) sootTripStart = soot
+            sootLast = soot
+        }
+        if (!kmReg.isNaN()) lastKmRegen = kmReg
+        if (cnt != null) lastCount = cnt
+
+        // rigenerazioni fatte mentre l'app non era collegata (contatore della centralina)
+        if (!countChecked && cnt != null) {
+            countChecked = true
+            val prev = prefs.getFloat("fap_cnt_$car", -1f).toDouble()
+            if (prev >= 0) {
+                val n = ((cnt - prev + 256) % 256).toInt()
+                if (n in 1..10) repeat(n) {
+                    events.add(RegenEvent(now, now, 0.0, Double.NaN, 0.0, "contatore centralina", false, Double.NaN, "a posteriori"))
+                }
+            }
+        }
+
+        val static = (v["regen_static"] ?: 0.0) > 0
+        val active = (cmd != null && cmd > 0) || (set != null && set > 450) || static
+        if (regenStart == 0L) {
+            if (active) {
+                regenStart = now; regenTripKm0 = km; regenMax = temp; method = "centralina"
+                ecuType = if (static) "statica" else "attiva"
+                soot0 = soot ?: Double.NaN; kmRegen0 = kmReg; cnt0 = cnt ?: Double.NaN; ecuActiveOffSince = 0L
+                passiveStart = 0L
+                onStart()
+            } else if (soot != null) {
+                // combustione passiva: la fuliggine cala senza che la centralina comandi nulla (autostrada)
+                sootMax = if (sootMax.isNaN()) soot else maxOf(sootMax, soot)
+                if (sootMax - soot >= 0.3 && passiveStart == 0L) { passiveStart = now; passiveKm0 = km }
+            }
+        } else {
+            if (!temp.isNaN()) regenMax = if (regenMax.isNaN()) temp else maxOf(regenMax, temp)
+            if (!active) {
+                if (ecuActiveOffSince == 0L) ecuActiveOffSince = now
+                if (now - ecuActiveOffSince > 20_000) {
+                    val dropped = !soot0.isNaN() && soot != null && soot <= soot0 * 0.7
+                    val reset = !kmRegen0.isNaN() && !kmReg.isNaN() && kmReg < kmRegen0
+                    val counted = !cnt0.isNaN() && cnt != null && cnt != cnt0
+                    closeEcu(ecuActiveOffSince, km, interrupted = !(dropped || reset || counted), soot = soot)
+                    sootMax = soot ?: Double.NaN
+                }
+            } else ecuActiveOffSince = 0L
+        }
+
+        live.value = FapLive(
+            regen = regenStart > 0, since = regenStart, reason = "centralina", confidence = "sicura",
+            restriction = Double.NaN, dpfTemp = temp, dp = v["dpf_dp_mbar"] ?: Double.NaN,
+            ecu = true, soot = soot ?: sootLast, kmRegen = kmReg, type = if (regenStart > 0) ecuType else "",
+        )
+        return true
+    }
+
+    private fun closeEcu(end: Long, km: Double, interrupted: Boolean, soot: Double?) {
+        val d = (end - regenStart) / 1000.0
+        // kmStart = km percorsi dalla pulizia precedente (dato della centralina)
+        events.add(RegenEvent(regenStart, end, d, kmRegen0, km - regenTripKm0, "centralina", interrupted, regenMax,
+            ecuType, soot0, soot ?: Double.NaN))
+        regenStart = 0L; ecuActiveOffSince = 0L
+    }
+
     private fun bin(speed: Double, rpm: Double): String? = when {
         speed < 1 && rpm in 600.0..1300.0 -> "idle"
         speed in 30.0..50.0 -> "s40"
@@ -58,6 +153,7 @@ class FapAcc(private val ctx: Context, private val car: Long, private val onStar
     }
 
     fun add(v: Map<String, Double>, now: Long, km: Double) {
+        if (addEcu(v, now, km)) return
         val speed = v["speed"] ?: return
         val rpm = v["rpm"] ?: return
         val load = v["load"] ?: return
@@ -136,12 +232,31 @@ class FapAcc(private val ctx: Context, private val car: Long, private val onStar
 
     /** A fine viaggio: se la rigenerazione era in corso, è stata interrotta spegnendo il motore. */
     fun finish(now: Long, km: Double) {
+        if (ecuMode) {
+            if (regenStart > 0) closeEcu(now, km, true, if (sootLast.isNaN()) null else sootLast)
+            if (passiveStart > 0 && !sootMax.isNaN() && !sootLast.isNaN() && sootMax - sootLast >= 0.3)
+                events.add(RegenEvent(passiveStart, now, (now - passiveStart) / 1000.0, passiveKm0, km - passiveKm0,
+                    "centralina", false, Double.NaN, "passiva", sootMax, sootLast))
+            val e = prefs.edit()
+            if (!lastCount.isNaN()) e.putFloat("fap_cnt_$car", lastCount.toFloat())
+            e.apply()
+            live.value = FapLive()
+            return
+        }
         if (regenStart > 0) close(now, km, true)
         prefs.edit().putString(key, base.toString()).apply()
         live.value = FapLive()
     }
 
-    fun metrics(): Map<String, Double> = if (restr.n > 10) mapOf("dpf_restr" to restr.mean) else emptyMap()
+    fun metrics(): Map<String, Double> {
+        val m = HashMap<String, Double>()
+        if (restr.n > 10) m["dpf_restr"] = restr.mean
+        if (!sootTripStart.isNaN()) m["soot_start"] = sootTripStart
+        if (!sootLast.isNaN()) m["soot_end"] = sootLast
+        if (!lastKmRegen.isNaN()) m["km_regen_end"] = lastKmRegen
+        if (!oilDil.isNaN()) m["oil_dilution"] = oilDil
+        return m
+    }
 
     companion object {
         val live = MutableStateFlow(FapLive())
