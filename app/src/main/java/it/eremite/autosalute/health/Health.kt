@@ -84,7 +84,9 @@ object Health {
 
         // --- Codici errore ---
         if (mil) f += Finding(Cat.CODICI, 2, "Spia motore accesa", "La centralina ha acceso la spia: fai controllare l'auto al più presto.")
-        if (dtcs.isNotEmpty()) f += Finding(Cat.CODICI, 2, "Codici errore: ${dtcs.joinToString()}", "Errori memorizzati dalla centralina. ${dtcs.joinToString("\n") { "$it: " + Dtc.describe(it) }}")
+        if (dtcs.isNotEmpty()) f += Finding(Cat.CODICI, if (mil) 2 else 1, "Codici errore: ${dtcs.joinToString()}",
+            (if (mil) "Errori memorizzati, spia motore accesa. " else "Errori memorizzati, spia motore spenta: guasto da riparare ma non urgente. ") +
+                dtcs.joinToString("\n") { "$it: " + Dtc.describe(it) })
         if (pending.isNotEmpty()) f += Finding(Cat.CODICI, 1, "Codici in sospeso: ${pending.joinToString()}", "La centralina ha visto un problema ma non lo ha ancora confermato: è il primo segnale di qualcosa che sta iniziando. ${pending.joinToString("\n") { "$it: " + Dtc.describe(it) }}")
 
         // --- Soglie assolute ---

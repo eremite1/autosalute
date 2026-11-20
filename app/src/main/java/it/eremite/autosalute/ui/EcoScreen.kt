@@ -244,6 +244,13 @@ private fun LiveMap() {
 @Composable
 private fun FapBanner() {
     val f by FapAcc.live.collectAsState()
+    if (!f.regen && f.requested) {
+        Column(Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(18.dp)).background(C.card).padding(14.dp)) {
+            Text("La centralina chiede una pulizia del FAP", color = C.info, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("Partirà da sola appena il motore è caldo e viaggi a velocità costante (extraurbano o autostrada).", color = C.dim, fontSize = 13.sp)
+        }
+        return
+    }
     if (!f.regen) return
     Column(Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(18.dp)).background(C.warn.copy(alpha = 0.16f)).padding(16.dp)) {
         Text("Pulizia del FAP in corso", color = C.warn, fontSize = 20.sp, fontWeight = FontWeight.Bold)

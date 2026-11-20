@@ -1,6 +1,7 @@
 package it.eremite.autosalute.health
 
 import android.content.Context
+import it.eremite.autosalute.Live
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONObject
 
@@ -28,6 +29,7 @@ data class FapLive(
     val soot: Double = Double.NaN,
     val kmRegen: Double = Double.NaN,
     val type: String = "",
+    val requested: Boolean = false,
 )
 
 class RegenEvent(
@@ -69,6 +71,14 @@ class FapAcc(private val ctx: Context, private val car: Long, private val onStar
     private var lastCount = Double.NaN
     private var lastKmRegen = Double.NaN
     private var oilDil = Double.NaN
+    private var restCmd: Double? = null
+    private var candSince = 0L
+    private var reqNow = false
+    private var logged = false
+    private var cmdFirst = Double.NaN
+    private var setFirst = Double.NaN
+    private var tempMaxTrip = Double.NaN
+    private var sootPrev: Double? = null
 
     /** Usa i valori della centralina Renault. Restituisce false se non disponibili. */
     private fun addEcu(v: Map<String, Double>, now: Long, km: Double): Boolean {
@@ -98,25 +108,49 @@ class FapAcc(private val ctx: Context, private val car: Long, private val onStar
             }
         }
 
-        val static = (v["regen_static"] ?: 0.0) > 0
-        val active = (cmd != null && cmd > 0) || (set != null && set > 450) || static
+        val coolant = v["coolant"] ?: Double.NaN
+        val speed = v["speed"] ?: 0.0
+        if (!temp.isNaN()) tempMaxTrip = if (tempMaxTrip.isNaN()) temp else maxOf(tempMaxTrip, temp)
+        if (!logged && (cmd != null || set != null)) {
+            logged = true; cmdFirst = cmd ?: Double.NaN; setFirst = set ?: Double.NaN
+            Live.log("FAP centralina: comando=${cmd ?: "-"} temp.richiesta=${set ?: "-"} temp.filtro=${if (temp.isNaN()) "-" else temp.toInt()} " +
+                "fuliggine=${soot ?: "-"} km.da.pulizia=${if (kmReg.isNaN()) "-" else kmReg.toInt()} statica=${v["regen_static"] ?: "-"}")
+        }
+        // Valore "a riposo" del comando: quello letto a motore freddo, quando una pulizia è impossibile.
+        if (cmd != null && !coolant.isNaN() && coolant < 50 && regenStart == 0L) {
+            restCmd = cmd; prefs.edit().putFloat("fap_rest_cmd_$car", cmd.toFloat()).apply()
+        }
+        val rest = restCmd ?: prefs.getFloat("fap_rest_cmd_$car", 0f).toDouble()
+        val static = (v["regen_static"] ?: 0.0) > 0 && speed < 1
+        val requested = (cmd != null && cmd != rest) || static
+        // Una pulizia è IN CORSO solo se il filtro è davvero caldo (oltre 450°C per un minuto).
+        // Se l'auto non dà la temperatura, serve la richiesta della centralina per 3 minuti in marcia a motore caldo.
+        val tempKnown = !temp.isNaN()
+        if (tempKnown && temp >= 450) { if (hotSince == 0L) hotSince = now } else hotSince = 0L
+        val cand = static || (tempKnown && hotSince > 0 && now - hotSince >= 60_000) ||
+            (!tempKnown && requested && !coolant.isNaN() && coolant >= 70 && speed > 30)
+        if (cand) { if (candSince == 0L) candSince = now } else candSince = 0L
+        val running = cand && (tempKnown || static || now - candSince >= 180_000)
+        reqNow = requested && regenStart == 0L
+
         if (regenStart == 0L) {
-            if (active) {
-                regenStart = now; regenTripKm0 = km; regenMax = temp; method = "centralina"
+            if (running) {
+                regenStart = if (candSince > 0) candSince else now; regenTripKm0 = km; regenMax = temp; method = "centralina"
                 ecuType = if (static) "statica" else "attiva"
-                soot0 = soot ?: Double.NaN; kmRegen0 = kmReg; cnt0 = cnt ?: Double.NaN; ecuActiveOffSince = 0L
+                soot0 = sootPrev ?: soot ?: Double.NaN; kmRegen0 = kmReg; cnt0 = cnt ?: Double.NaN; ecuActiveOffSince = 0L
                 passiveStart = 0L
                 onStart()
             } else if (soot != null) {
-                // combustione passiva: la fuliggine cala senza che la centralina comandi nulla (autostrada)
+                // combustione passiva: la fuliggine cala senza pulizia comandata (autostrada)
                 sootMax = if (sootMax.isNaN()) soot else maxOf(sootMax, soot)
-                if (sootMax - soot >= 0.3 && passiveStart == 0L) { passiveStart = now; passiveKm0 = km }
+                if (sootMax - soot >= 0.3 && passiveStart == 0L && !requested) { passiveStart = now; passiveKm0 = km }
             }
         } else {
             if (!temp.isNaN()) regenMax = if (regenMax.isNaN()) temp else maxOf(regenMax, temp)
-            if (!active) {
+            val stillOn = if (tempKnown) temp >= 400 else requested
+            if (!stillOn) {
                 if (ecuActiveOffSince == 0L) ecuActiveOffSince = now
-                if (now - ecuActiveOffSince > 20_000) {
+                if (now - ecuActiveOffSince > 60_000) {
                     val dropped = !soot0.isNaN() && soot != null && soot <= soot0 * 0.7
                     val reset = !kmRegen0.isNaN() && !kmReg.isNaN() && kmReg < kmRegen0
                     val counted = !cnt0.isNaN() && cnt != null && cnt != cnt0
@@ -125,11 +159,13 @@ class FapAcc(private val ctx: Context, private val car: Long, private val onStar
                 }
             } else ecuActiveOffSince = 0L
         }
+        if (soot != null) sootPrev = soot
 
         live.value = FapLive(
             regen = regenStart > 0, since = regenStart, reason = "centralina", confidence = "sicura",
             restriction = Double.NaN, dpfTemp = temp, dp = v["dpf_dp_mbar"] ?: Double.NaN,
             ecu = true, soot = soot ?: sootLast, kmRegen = kmReg, type = if (regenStart > 0) ecuType else "",
+            requested = reqNow,
         )
         return true
     }
@@ -233,7 +269,10 @@ class FapAcc(private val ctx: Context, private val car: Long, private val onStar
     /** A fine viaggio: se la rigenerazione era in corso, è stata interrotta spegnendo il motore. */
     fun finish(now: Long, km: Double) {
         if (ecuMode) {
-            if (regenStart > 0) closeEcu(now, km, true, if (sootLast.isNaN()) null else sootLast)
+            if (regenStart > 0) {
+                if (now - regenStart >= 120_000) closeEcu(now, km, true, if (sootLast.isNaN()) null else sootLast)
+                else regenStart = 0L
+            }
             if (passiveStart > 0 && !sootMax.isNaN() && !sootLast.isNaN() && sootMax - sootLast >= 0.3)
                 events.add(RegenEvent(passiveStart, now, (now - passiveStart) / 1000.0, passiveKm0, km - passiveKm0,
                     "centralina", false, Double.NaN, "passiva", sootMax, sootLast))
@@ -255,6 +294,9 @@ class FapAcc(private val ctx: Context, private val car: Long, private val onStar
         if (!sootLast.isNaN()) m["soot_end"] = sootLast
         if (!lastKmRegen.isNaN()) m["km_regen_end"] = lastKmRegen
         if (!oilDil.isNaN()) m["oil_dilution"] = oilDil
+        if (!cmdFirst.isNaN()) m["regen_cmd_first"] = cmdFirst
+        if (!setFirst.isNaN()) m["dpf_set_first"] = setFirst
+        if (!tempMaxTrip.isNaN()) m["dpf_temp_max"] = tempMaxTrip
         return m
     }
 

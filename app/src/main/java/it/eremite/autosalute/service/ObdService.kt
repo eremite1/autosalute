@@ -214,9 +214,17 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
         if (DiagCtl.requested) runDiag()
         try { acc.dtcs.addAll(elm.dtcs("03")); acc.pending.addAll(elm.dtcs("07")) } catch (e: IOException) { throw e } catch (_: Exception) {}
         elm.monitor()?.let { acc.mil = it.first }
-        if (acc.dtcs.isNotEmpty() || acc.mil) alarm("dtc", "Codice errore: ${acc.dtcs.joinToString()}",
-            acc.dtcs.joinToString("\n") { c -> "$c: " + Dtc.describe(c) } +
-                (if (acc.mil) "\nSpia motore accesa." else "\nSpia motore spenta: guasto memorizzato, non per forza attuale."), 2, "Codici errore")
+        if (acc.dtcs.isNotEmpty() || acc.mil) {
+            // stesso codice già segnalato nelle ultime 24 ore e spia spenta: niente nuova notifica
+            val p = ctx.getSharedPreferences("autosalute", Context.MODE_PRIVATE)
+            val key = "$car:" + acc.dtcs.sorted().joinToString(",")
+            val known = p.getString("dtc_notified", "") == key && System.currentTimeMillis() - p.getLong("dtc_notified_ts", 0) < 24 * 3600_000L
+            if (!known || acc.mil) p.edit().putString("dtc_notified", key).putLong("dtc_notified_ts", System.currentTimeMillis()).apply()
+            alarm("dtc", "Codice errore: ${acc.dtcs.joinToString()}",
+                acc.dtcs.joinToString("\n") { c -> "$c: " + Dtc.describe(c) } +
+                    (if (acc.mil) "\nSpia motore accesa." else "\nSpia motore spenta: guasto memorizzato, non per forza attuale."),
+                if (acc.mil) 2 else 1, "Codici errore", notify = !known || acc.mil)
+        }
         else if (acc.pending.isNotEmpty()) alarm("pend", "Problema in sospeso", "Codici in sospeso: ${acc.pending.joinToString()}. Potrebbe essere l'inizio di un guasto.", 1, "Codici errore")
 
         val fuelPid = 0x5E in sup
@@ -364,11 +372,11 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
         }
     }
 
-    private fun alarm(key: String, title: String, text: String, sev: Int, cat: String) {
+    private fun alarm(key: String, title: String, text: String, sev: Int, cat: String, notify: Boolean = true) {
         if (!sent.add(key)) return
         liveFindings.add(Finding(cat, sev, title, text))
         Live.alerts.value = liveFindings.toList()
-        App.notify(ctx, if (sev >= 2) App.CH_ALARM else App.CH_TRIP, 100 + sent.size, title, text)
+        if (notify) App.notify(ctx, if (sev >= 2) App.CH_ALARM else App.CH_TRIP, 100 + sent.size, title, text)
         Live.log("Allarme: $title")
     }
 
