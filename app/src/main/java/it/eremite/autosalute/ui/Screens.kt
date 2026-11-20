@@ -217,6 +217,8 @@ private fun liveColor(k: String, v: Double) = when (k) {
 fun TripsScreen() {
     val trips = rememberTrips()
     var open by remember { mutableStateOf<Trip?>(null) }
+    var routes by remember { mutableStateOf(false) }
+    if (routes) { RoutesScreen { routes = false }; return }
     open?.let { t ->
         BackHandler { open = null }
         TripDetail(t) { open = null }
@@ -226,6 +228,9 @@ fun TripsScreen() {
         item {
             val km = trips.sumOf { it.km }
             Header("Viaggi", "${trips.size} viaggi · ${"%.0f".format(km)} km registrati")
+            OutlinedButton(onClick = { routes = true }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                Text("🗺  Confronta i percorsi: quale conviene?")
+            }
             Spacer(Modifier.height(12.dp))
         }
         if (trips.isEmpty()) item { Text("Ancora nessun viaggio.", color = C.dim) }

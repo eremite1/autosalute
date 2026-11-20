@@ -100,7 +100,8 @@ object Health {
         }
         g("oil_max")?.let { if (it >= 128) f += Finding(Cat.MOTORE, 1, "Olio molto caldo (${it.toInt()}°C)", "Temperatura olio alta: controlla il livello olio.") }
         g("volt_rest")?.let {
-            if (it < 11.9) f += Finding(Cat.ELETTR, 2, "Batteria scarica (${fmt(it)} V)", "A motore spento la batteria è sotto 11,9 V: rischi di non ripartire.")
+            if (it < 11.9) f += Finding(Cat.ELETTR, 1, "Batteria bassa prima dell'avviamento (${fmt(it)} V)",
+                "Misurata a quadro acceso: le candelette e la pompa assorbono corrente e abbassano la lettura. Se l'auto parte bene non è grave; se la segnalazione si ripete, fai testare la batteria (il test è gratuito da molti elettrauto).")
             else if (it < 12.25) f += Finding(Cat.ELETTR, 1, "Batteria debole (${fmt(it)} V)", "A riposo dovrebbe stare sopra 12,4 V. Falla controllare se continua.")
         }
         g("crank_min")?.let {
@@ -185,7 +186,7 @@ class TripAcc {
 
         if (!engineStarted) {
             if (!volt.isNaN()) {
-                if (volRest.isNaN() && (rpm.isNaN() || rpm < 50)) volRest = volt
+                if (rpm.isNaN() || rpm < 50) volRest = if (volRest.isNaN()) volt else maxOf(volRest, volt)
                 crankMin = if (crankMin.isNaN()) volt else minOf(crankMin, volt)
             }
             if (!rpm.isNaN() && rpm > 400) {
