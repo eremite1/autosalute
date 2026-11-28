@@ -75,6 +75,17 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "autosalute.d
         db.execSQL("ALTER TABLE cars ADD COLUMN fp TEXT")
     }
 
+    /** Sposta tutti i dati di un'auto in un'altra e cancella la prima. */
+    fun mergeCar(from: Long, to: Long) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for (t in listOf("trips", "maint", "diag", "regen")) db.execSQL("UPDATE $t SET car=? WHERE car=?", arrayOf(to, from))
+            db.delete("cars", "id=?", arrayOf(from.toString()))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
     fun setCarFp(id: Long, fp: String?) { writableDatabase.update("cars", ContentValues().apply { if (fp == null) putNull("fp") else put("fp", fp) }, "id=?", arrayOf(id.toString())) }
     fun carFp(id: Long): String? = readableDatabase.rawQuery("SELECT fp FROM cars WHERE id=?", arrayOf(id.toString())).use { if (it.moveToFirst() && !it.isNull(0)) it.getString(0) else null }
     fun carByFp(fp: String): Car? = readableDatabase.rawQuery("SELECT id FROM cars WHERE fp=? LIMIT 1", arrayOf(fp)).use { if (it.moveToFirst()) car(it.getLong(0)) else null }

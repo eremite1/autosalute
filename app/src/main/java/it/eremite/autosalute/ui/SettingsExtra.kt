@@ -90,7 +90,12 @@ fun CarsBox(act: MainActivity) {
         if (n != null) { val nid = Db.get(act).addCar(n, null); Cars.select(act, nid); Backup.auto(act) }
     }
     rename?.let { c ->
-        CarEditDialog(c, canDelete = cars.size > 1,
+        CarEditDialog(c, canDelete = cars.size > 1, others = cars.filter { it.id != c.id },
+            onMerge = { target ->
+                Db.get(act).mergeCar(c.id, target.id)
+                if (c.id == id) Cars.select(act, target.id) else Live.tripsVersion.value++
+                rename = null; Backup.auto(act)
+            },
             onDismiss = { rename = null },
             onSave = { n, clearVin -> Db.get(act).renameCar(c.id, n); if (clearVin) Db.get(act).setCarVin(c.id, null); rename = null; Live.tripsVersion.value++; Backup.auto(act) },
             onDelete = { rename = null; delete = c })
@@ -125,8 +130,10 @@ private fun NameDialog(title: String, initial: String, done: (String?) -> Unit) 
 }
 
 @Composable
-private fun CarEditDialog(c: Car, canDelete: Boolean, onDismiss: () -> Unit, onSave: (String, Boolean) -> Unit, onDelete: () -> Unit) {
+private fun CarEditDialog(c: Car, canDelete: Boolean, others: List<Car>, onMerge: (Car) -> Unit,
+                          onDismiss: () -> Unit, onSave: (String, Boolean) -> Unit, onDelete: () -> Unit) {
     var t by remember { mutableStateOf(c.name) }
+    var merge by remember { mutableStateOf(false) }
     var clearVin by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -139,6 +146,12 @@ private fun CarEditDialog(c: Car, canDelete: Boolean, onDismiss: () -> Unit, onS
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = clearVin, onCheckedChange = { clearVin = it })
                         Text("Dimentica il telaio ${c.vin} (se era sbagliato)", fontSize = 13.sp)
+                    }
+                }
+                if (others.isNotEmpty()) {
+                    TextButton(onClick = { merge = !merge }) { Text("È la stessa auto di un altro profilo? Unisci…") }
+                    if (merge) others.forEach { o ->
+                        TextButton(onClick = { onMerge(o) }) { Text("→ Sposta tutto in \"${o.name}\"") }
                     }
                 }
                 if (canDelete) TextButton(onClick = onDelete) { Text("Elimina questa auto e i suoi dati", color = C.bad) }

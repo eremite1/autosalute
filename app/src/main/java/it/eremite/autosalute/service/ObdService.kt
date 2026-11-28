@@ -192,13 +192,17 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
     suspend fun run() {
         sup = elm.supported()
         Live.log("La centralina fornisce ${sup.size} parametri")
-        vin = try { elm.vin() } catch (e: IOException) { throw e } catch (_: Exception) { null }
+        // il telaio a volte non arriva al primo colpo: riprova prima di decidere
+        for (attempt in 0 until 3) {
+            vin = try { elm.vin() } catch (e: IOException) { throw e } catch (_: Exception) { null }
+            if (vin != null) break
+            delay(600)
+        }
         val proto = elm.protocol()
         // impronta della centralina: serve a riconoscere le auto che non comunicano il telaio
-        val fp = if (vin != null) null else {
-            val calib = try { elm.info09(0x04) } catch (e: IOException) { throw e } catch (_: Exception) { null }
-            proto + "|" + sup.sorted().joinToString(",").hashCode().toString(16) + "|" + (calib ?: "")
-        }
+        // impronta stabile: protocollo + versione del software della centralina
+        val calib = try { elm.info09(0x04) } catch (e: IOException) { throw e } catch (_: Exception) { null }
+        val fp = proto + "|" + (calib ?: "")
         car = resolveCar(vin, fp)
         ext = RenaultExt(elm)
         ext.probe(proto, vin)
@@ -310,20 +314,31 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
     }
 
     /** Riconosce l'auto dal numero di telaio, così i dati di auto diverse non si mescolano. */
-    private fun resolveCar(vin: String?, fp: String?): Long {
+    private fun fpProto(fp: String) = fp.substringBefore("|")
+    private fun fpCalib(fp: String) = fp.substringAfterLast("|")
+
+    /** Due impronte sono della stessa centralina se protocollo e software coincidono. */
+    private fun sameEcu(a: String, b: String) = fpProto(a) == fpProto(b) && fpCalib(a).isNotEmpty() && fpCalib(a) == fpCalib(b)
+
+    private fun resolveCar(vin: String?, fp: String): Long {
         val active = Cars.activeId(ctx)
         if (vin == null) {
-            if (fp == null) return active
             Live.log("Telaio non disponibile: riconosco l'auto dalla centralina")
-            db.carByFp(fp)?.let { c ->
+            db.cars().firstOrNull { c -> db.carFp(c.id)?.let { sameEcu(it, fp) } == true }?.let { c ->
                 if (c.id != active) {
                     Cars.select(ctx, c.id)
                     App.notify(ctx, App.CH_TRIP, 90, "Auto riconosciuta: ${c.name}", "Ho selezionato il suo profilo in automatico.")
                 }
                 return c.id
             }
-            val act = db.car(active)
-            if (act != null && act.vin == null && db.carFp(active) == null) { db.setCarFp(active, fp); return active }
+            val actFp = db.carFp(active)
+            // Nel dubbio resta sull'auto selezionata: crea un profilo nuovo solo se la centralina
+            // è sicuramente diversa (software diverso, entrambi letti).
+            val surelyDifferent = actFp != null && fpCalib(fp).isNotEmpty() && fpCalib(actFp).isNotEmpty() && !sameEcu(actFp, fp)
+            if (!surelyDifferent) {
+                if (actFp == null && fpCalib(fp).isNotEmpty()) db.setCarFp(active, fp)
+                return active
+            }
             val id = db.addCar("Auto nuova " + java.text.SimpleDateFormat("d MMM", java.util.Locale.ITALY).format(java.util.Date()), null)
             db.setCarFp(id, fp)
             Cars.select(ctx, id)
@@ -333,6 +348,7 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
         }
         Live.log("Telaio: $vin")
         db.carByVin(vin)?.let { c ->
+            rememberFp(c.id, fp)
             if (c.id != active) {
                 Cars.select(ctx, c.id)
                 App.notify(ctx, App.CH_TRIP, 90, "Auto riconosciuta: ${c.name}", "Ho selezionato il suo profilo in automatico.")
@@ -340,12 +356,34 @@ class Recorder(private val ctx: Context, private val elm: Elm, private val statu
             return c.id
         }
         val act = db.car(active)
-        if (act != null && act.vin == null) { db.setCarVin(active, vin); return active }
+        if (act != null && act.vin == null) { db.setCarVin(active, vin); rememberFp(active, fp); return active }
         val id = db.addCar("Auto ${vin.takeLast(6)}", vin)
+        rememberFp(id, fp)
         Cars.select(ctx, id)
         App.notify(ctx, App.CH_TRIP, 90, "Nuova auto rilevata",
             "Telaio $vin: i suoi dati vanno in un profilo separato, senza mescolarsi con le altre auto. Puoi rinominarla in Imposta.")
         return id
+    }
+
+    /**
+     * Salva l'impronta della centralina per un'auto riconosciuta dal telaio e ripara gli errori:
+     * se in passato un viaggio di questa auto era finito in un profilo "nuovo" (telaio non letto),
+     * quel profilo viene riunito automaticamente.
+     */
+    private fun rememberFp(carId: Long, fp: String) {
+        if (fpCalib(fp).isEmpty()) return
+        if (db.carFp(carId) == null) db.setCarFp(carId, fp)
+        for (c in db.cars()) {
+            if (c.id == carId || c.vin != null) continue
+            val ofp = db.carFp(c.id) ?: continue
+            if (sameEcu(ofp, fp)) {
+                db.mergeCar(c.id, carId)
+                Live.log("Profilo '${c.name}' riunito a quello giusto")
+                App.notify(ctx, App.CH_TRIP, 91, "Profilo auto sistemato",
+                    "I viaggi finiti per errore in \"${c.name}\" sono stati riportati nella tua auto.")
+                Live.tripsVersion.value++
+            }
+        }
     }
 
     private suspend fun checkCodes() {

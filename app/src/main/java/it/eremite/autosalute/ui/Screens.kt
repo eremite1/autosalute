@@ -23,6 +23,7 @@ import it.eremite.autosalute.Prefs
 import it.eremite.autosalute.Updater
 import it.eremite.autosalute.data.Db
 import it.eremite.autosalute.data.Backup
+import it.eremite.autosalute.data.Export
 import it.eremite.autosalute.data.Cars
 import it.eremite.autosalute.data.GeoPoint
 import it.eremite.autosalute.data.Sample
@@ -424,6 +425,15 @@ fun SetupScreen(act: MainActivity) {
 
         Section("Backup su Google Drive")
         BackupBox(act)
+
+        Section("Esporta i dati")
+        Box2(Modifier.fillMaxWidth()) {
+            Text("Crea un file di testo con tutti i viaggi, le rigenerazioni, le diagnosi e la manutenzione dell'auto selezionata. Puoi allegarlo in una chat con Claude per un'analisi completa.",
+                color = C.dim, fontSize = 12.sp)
+            val scope = rememberCoroutineScope()
+            Button(onClick = { scope.launch { Export.share(act, Export.build(act)) } },
+                modifier = Modifier.padding(top = 8.dp)) { Text("Esporta e condividi") }
+        }
 
         Section("Aggiornamenti")
         UpdateBox(always = true)
